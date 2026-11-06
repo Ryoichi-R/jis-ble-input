@@ -1,0 +1,42 @@
+{
+    "firmware": "0.1.0",
+    "protocol": 1,
+    "app": "1.7.0",
+    "fqbn": "Seeeduino:nrf52:xiaonRF52840Sense:softdevice=s140v6,debug=l0",
+    "core": {
+        "version": "1.1.13",
+        "url": "https://files.seeedstudio.com/arduino/core/nRF52/Seeed_nRF52_Boards-1.1.13.tar.bz2",
+        "sha256": "5243bd456e8b7a3328725e17e6c6efc9712662f5aa27b7dc807911aeb0e93071",
+        "bluefruit": "0.21.0",
+        "tinyusbArduino": "1.7.0",
+        "softdevice": "S140 7.3.0",
+        "sdFwid": "0x0123",
+        "bootloaderReference": "0.6.2 (not included or updated)",
+        "securityOriginalSha256": "341085b8ef39027b2c97831ec8ca252dbba2613f3147e668cc8e5867a99c290d",
+        "securityPatchedSha256": "7cac7f6bddf86554929548861aa747e97bf42fa3cf8e061652e67d3cc37a58c2"
+    },
+    "arduinoCli": {
+        "version": "1.3.1",
+        "architecture": "Windows x64 via emulation",
+        "url": "https://github.com/arduino/arduino-cli/releases/download/v1.3.1/arduino-cli_1.3.1_Windows_64bit.zip",
+        "sha256": "cfece6f356fdc9ca003cc3f0a488470030719c8e0e7bfce5e42ac9410d87441f"
+    },
+    "targetCompiler": "GNU Arm Embedded 9-2019q4 (9.2.1), Seeed index checksum verified by Arduino CLI",
+    "hostCompiler": {
+        "version": "Zig 0.14.1, C++11, -Wall -Wextra -Werror",
+        "architecture": "Windows x64 via emulation",
+        "url": "https://ziglang.org/download/0.14.1/zig-x86_64-windows-0.14.1.zip",
+        "sha256": "554f5378228923ffd558eac35e21af020c73789d87afeabf4bfd16f2e6feed2c"
+    },
+    "uf2": {
+        "family": "0xADA52840",
+        "applicationStart": "0x27000",
+        "applicationEndExclusive": "0xED000",
+        "converterSha256": "c3e86d44992cf0956cd07a73dca52bdd81f7cf149adde0642c15bafed05a6202"
+    },
+    "productionDependency": "Microsoft System.IO.Ports 10.0.14, MIT, api.nuget.org; owner approved",
+    "authentication": "No HMAC; owner accepts local process trust",
+    "hardwareTested": false,
+    "lineCoverage": "NOT_MEASURED",
+    "cppFormatting": "No workspace adapter; host warnings as errors, whitespace manually maintained"
+}

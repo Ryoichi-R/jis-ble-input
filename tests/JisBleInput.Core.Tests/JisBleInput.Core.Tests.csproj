@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+    <PropertyGroup>
+        <OutputType>Exe</OutputType>
+        <TargetFramework>net10.0</TargetFramework>
+    </PropertyGroup>
+    <ItemGroup>
+        <EmbeddedResource Include="../../contracts/xiao-protocol-v1/vectors.tsv" LogicalName="xiao-vectors.tsv" />
+        <ProjectReference Include="../../src/JisBleInput.Core/JisBleInput.Core.csproj" />
+        <Compile Include="../../src/JisBleInput.App/HidKeyboardMap.cs" Link="HidKeyboardMap.cs" />
+    </ItemGroup>
+</Project>

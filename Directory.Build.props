@@ -1,0 +1,13 @@
+<Project>
+    <PropertyGroup>
+        <BaseOutputPath>$(MSBuildThisFileDirectory)_internal/build-cache/bin/$(MSBuildProjectName)/</BaseOutputPath>
+        <BaseIntermediateOutputPath>$(MSBuildThisFileDirectory)_internal/build-cache/obj/$(MSBuildProjectName)/</BaseIntermediateOutputPath>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <DebugType>none</DebugType>
+        <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+        <PathMap>$(MSBuildThisFileDirectory)=/_/jis-ble-input/</PathMap>
+        <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+        <NuGetAudit>false</NuGetAudit>
+    </PropertyGroup>
+</Project>

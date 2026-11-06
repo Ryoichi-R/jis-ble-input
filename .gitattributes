@@ -1,0 +1,3 @@
+# Preserve the upstream notice hashes and the intentional sample line endings.
+licenses/windows-desktop-runtime/THIRD-PARTY-NOTICES-*.TXT -text -whitespace
+samples/*.txt -text -whitespace

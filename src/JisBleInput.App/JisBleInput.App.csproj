@@ -1,0 +1,67 @@
+<Project Sdk="Microsoft.NET.Sdk">
+    <PropertyGroup>
+        <OutputType>WinExe</OutputType>
+        <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+        <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
+        <EnableWindowsTargeting>true</EnableWindowsTargeting>
+        <RuntimeIdentifiers>win-arm64;win-x64</RuntimeIdentifiers>
+        <UseWPF>true</UseWPF>
+        <PublishSingleFile>true</PublishSingleFile>
+        <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+        <PublishTrimmed>false</PublishTrimmed>
+        <DebugType>none</DebugType>
+        <AssemblyName>JisBleInput</AssemblyName>
+        <Version>1.7.0</Version>
+        <Authors>Ryoichi-R</Authors>
+        <Copyright>Copyright (c) 2026 Ryoichi-R and contributors</Copyright>
+        <PackageLicenseExpression>MIT</PackageLicenseExpression>
+        <ApplicationIcon>../../assets/app.ico</ApplicationIcon>
+        <BundledRuntimeVersion>10.0.14</BundledRuntimeVersion>
+        <DisableTransitiveFrameworkReferenceDownloads>true</DisableTransitiveFrameworkReferenceDownloads>
+        <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+    </PropertyGroup>
+    <ItemGroup>
+        <PackageReference Include="System.IO.Ports" Version="10.0.14" />
+        <EmbeddedResource Include="../../assets/app.ico" LogicalName="JisBleInput.AppIcon.ico" />
+        <!-- The WPF profile uses this runtime pack; make it explicit so offline
+             restore does not depend on unrelated transitive framework packs. -->
+        <FrameworkReference Include="Microsoft.WindowsDesktop.App" />
+        <ProjectReference Include="../JisBleInput.Core/JisBleInput.Core.csproj" />
+        <Content Include="../../README.md;../../VALIDATION.md;../../LICENSE;../../THIRD-PARTY-NOTICES.md;../../SECURITY.md;../../SUPPORT.md">
+            <Link>%(Filename)%(Extension)</Link>
+            <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+            <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+        </Content>
+        <Content Include="../../licenses/**/*">
+            <Link>licenses/%(RecursiveDir)%(Filename)%(Extension)</Link>
+            <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+            <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+        </Content>
+        <Content Include="../../samples/**/*">
+            <Link>samples/%(RecursiveDir)%(Filename)%(Extension)</Link>
+            <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+            <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+        </Content>
+        <Content Include="../../docs/XIAO-PROTOCOL.md">
+            <Link>docs/XIAO-PROTOCOL.md</Link>
+            <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+            <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+        </Content>
+    </ItemGroup>
+    <!-- Pin this product's runtime without changing the workspace SDK or the Windows SDK reference pack. -->
+    <Target Name="PinBundledRuntimePacks" BeforeTargets="ProcessFrameworkReferences">
+        <ItemGroup>
+            <KnownFrameworkReference Update="Microsoft.NETCore.App;Microsoft.WindowsDesktop.App;Microsoft.WindowsDesktop.App.WPF;Microsoft.WindowsDesktop.App.WindowsForms"
+                                     Condition="'%(KnownFrameworkReference.TargetFramework)' == 'net10.0'"
+                                     DefaultRuntimeFrameworkVersion="$(BundledRuntimeVersion)"
+                                     LatestRuntimeFrameworkVersion="$(BundledRuntimeVersion)" />
+            <KnownRuntimePack Update="Microsoft.NETCore.App;Microsoft.WindowsDesktop.App"
+                              Condition="'%(KnownRuntimePack.TargetFramework)' == 'net10.0'"
+                              LatestRuntimeFrameworkVersion="$(BundledRuntimeVersion)" />
+            <KnownAppHostPack Update="Microsoft.NETCore.App" Condition="'%(KnownAppHostPack.TargetFramework)' == 'net10.0'"
+                              AppHostPackVersion="$(BundledRuntimeVersion)" />
+            <KnownILLinkPack Update="Microsoft.NET.ILLink.Tasks" Condition="'%(KnownILLinkPack.TargetFramework)' == 'net10.0'"
+                             ILLinkPackVersion="$(BundledRuntimeVersion)" />
+        </ItemGroup>
+    </Target>
+</Project>
