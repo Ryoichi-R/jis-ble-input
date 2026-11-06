@@ -88,6 +88,37 @@ internal static class XiaoChecks
             try { await client.StartAsync(CancellationToken.None); check(false, "wrong session"); }
             catch (Exception error) when (error is IOException or OperationCanceledException) { check(channel.Disposed, "wrong-session response invalidates the link"); }
         }
+        var invalidSuccesses = new (XiaoCommand Command, byte[] Payload, Func<byte[], byte[]> Reply)[]
+        {
+            (XiaoCommand.Arm, [], _ => [0]),
+            (XiaoCommand.Report, [1, 0, 4, 0, 0, 0, 0, 0], _ => [0]),
+            (XiaoCommand.Disarm, [], _ => [0]),
+            (XiaoCommand.Disarm, [], state => [.. state, 0]),
+            (XiaoCommand.Disarm, [], state => { state[6] = 2; return state; })
+        };
+        foreach (var (command, payload, reply) in invalidSuccesses)
+        {
+            using var channel = new FakeChannel
+            {
+                TransformResponse = (request, state) => request == command ? reply(state) : state
+            };
+            using var client = new XiaoClient(channel, TimeSpan.FromSeconds(5));
+            var faulted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            client.Faulted += () => faulted.TrySetResult();
+            await client.StartAsync(CancellationToken.None);
+            try
+            {
+                await client.RequestAsync(command, payload, client.Generation, CancellationToken.None)
+                    .WaitAsync(TimeSpan.FromSeconds(2));
+                check(false, $"reject malformed {command} success ACK");
+            }
+            catch (Exception error) when (error is IOException { InnerException: InvalidDataException } or OperationCanceledException)
+            {
+                await faulted.Task.WaitAsync(TimeSpan.FromSeconds(1));
+                check(channel.Disposed && channel.Commands.Count(request => request == command) == 1,
+                    $"malformed {command} success ACK closes the channel without retrying");
+            }
+        }
         var preferences = new TransportPreferences();
         preferences.Validate();
         check(preferences.Method == ConnectionMethod.LocalBluetooth, "missing transport preferences preserve original Bluetooth mode");
@@ -108,6 +139,7 @@ internal static class XiaoChecks
         public readonly List<uint> Sequences = [];
         public bool DropArm { get; init; }
         public bool WrongSession { get; init; }
+        public Func<XiaoCommand, byte[], byte[]>? TransformResponse { get; init; }
         public bool Disposed { get; private set; }
         public async Task<int> ReadAsync(byte[] buffer, CancellationToken cancellation)
         {
@@ -123,6 +155,7 @@ internal static class XiaoChecks
             var state = new byte[XiaoStatus.Length + 1];
             "JBI1"u8.CopyTo(state.AsSpan(1)); state[5] = 7 | 16 | 64; state[6] = 1;
             state[56] = 1;
+            state = TransformResponse?.Invoke((XiaoCommand)request.Command, state) ?? state;
             var response = XiaoProtocol.Encode(new((byte)(request.Command | 0x80), WrongSession ? Guid.NewGuid() : request.Session, request.Sequence, 4, state));
             foreach (var chunk in response.Chunk(3)) incoming.Writer.TryWrite(chunk);
             return Task.CompletedTask;

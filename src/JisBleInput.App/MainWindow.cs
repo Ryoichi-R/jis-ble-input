@@ -365,20 +365,7 @@ internal sealed class MainWindow : Window
             catch (InvalidOperationException error) { message.Text = error.Message; }
             UpdateButtons();
         };
-        stop.Click += async (_, _) =>
-        {
-            CancelTransfer();
-            if (operation is not null)
-            {
-                try { await operation; } catch { }
-            }
-            activeTarget = null;
-            // XIAO keeps the DISARM/release result written by SendToAsync; Bluetooth keeps 1.6.5 text.
-            message.Text = bluetooth.UsesLocalBluetooth
-                ? "停止しました。一部入力・意図しない確定の可能性があります。受信側を手動確認してください。自動削除・再送はしません。"
-                : message.Text + " 停止操作を完了しました。受信側を手動確認してください。自動削除・再送はしません。";
-            UpdateButtons();
-        };
+        stop.Click += (_, _) => CancelTransfer();
         tray = new TrayIcon(() => Dispatch(RestoreFromTray), () => Dispatch(RequestExit));
         Closing += OnClosing;
         Closed += (_, _) => { statusTimer.Stop(); tray.Dispose(); };
@@ -668,7 +655,7 @@ internal sealed class MainWindow : Window
                     ? "受信側のIMEオフ（A）を確認してください。"
                     : "受信側が「あ」になったか確認してください。",
                 SendState.KeysSent => "キー列を送信しました。受信側で文章を確認してください。",
-                _ => "途中停止しました。一部入力・意図しない確定の可能性があります。受信側を確認してください。"
+                _ => "途中停止しました。一部入力・意図しない確定の可能性があります。受信側を確認してください。自動削除・再送はしません。"
             };
         }
         catch (OperationCanceledException) { message.Text = "途中停止しました。受信側を確認してください。自動再送はしません。"; }

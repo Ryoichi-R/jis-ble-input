@@ -221,6 +221,23 @@ internal static class UiTestProgram
             Check(message.Text.Contains("途中停止") && message.Text.Contains("キー解放は未確認"),
                 "cancellation also retains an explicit release-failure warning");
 
+            transport.WaitForStop = true;
+            var stop = Find<Button>(window, "StopButton");
+            foreach (var failRelease in new[] { true, false })
+            {
+                transport.FailRelease = failRelease;
+                var sending = window.SendToAsync(target);
+                Check(stop.IsEnabled, "a pending local Bluetooth notification can be stopped");
+                stop.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
+                await sending;
+                await Dispatcher.Yield(DispatcherPriority.Background);
+                Check(message.Text.Contains("途中停止") && (failRelease
+                    ? message.Text.Contains("キー解放は未確認") && message.Text.Contains("キー・IME・入力欄")
+                    : message.Text.Contains("キー解放の操作は送信済み") && message.Text.Contains("実状態は未確認")),
+                    failRelease ? "the local Bluetooth Stop button retains the release failure warning"
+                        : "the local Bluetooth Stop button retains the distinction between release sent and remote state");
+            }
+
             previousWrites = transport.Writes;
             transport.Ready = false;
             await window.SendToAsync(target);
@@ -373,6 +390,7 @@ internal static class UiTestProgram
         public bool Ready { get; set; } = true;
         public bool FailRelease { get; set; } = true;
         public bool CancelSend { get; set; }
+        public bool WaitForStop { get; set; }
         public int Writes { get; private set; }
         public int ReleaseAttempts { get; private set; }
         public bool IsReady(SendTarget target) => Ready;
@@ -386,6 +404,7 @@ internal static class UiTestProgram
                 if (FailRelease) throw new InvalidOperationException("synthetic release failure");
                 return Task.CompletedTask;
             }
+            if (WaitForStop) return Task.Delay(Timeout.Infinite, cancellation);
             if (CancelSend) throw new OperationCanceledException("synthetic send cancellation");
             throw new InvalidOperationException("synthetic notification failure");
         }

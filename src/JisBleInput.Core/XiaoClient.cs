@@ -83,7 +83,6 @@ public sealed class XiaoClient : IDisposable
             }
             finally { writer.Release(); }
             var response = await completion.Task.WaitAsync(deadline.Token).ConfigureAwait(false);
-            if (response.Payload.Length == 0) throw new InvalidDataException("XIAOの応答が空です。");
             if (response.Payload[0] != (byte)XiaoResult.Success)
                 throw new IOException($"XIAO操作失敗: {(XiaoResult)response.Payload[0]}。自動再送しません。");
         }
@@ -117,7 +116,8 @@ public sealed class XiaoClient : IDisposable
                     }
                     if (!pending.TryGetValue(frame.Sequence, out var request) || request.Command != frame.Command)
                         throw new InvalidDataException("XIAOの応答順序が一致しません。");
-                    if (frame.Payload.Length > 1 && frame.Payload[0] == 0)
+                    if (frame.Payload.Length == 0) throw new InvalidDataException("XIAOの応答が空です。");
+                    if (frame.Payload[0] == (byte)XiaoResult.Success)
                         AcceptStatus(frame.Generation, frame.Payload.AsSpan(1));
                     if (!request.Completion.TrySetResult(frame)) throw new InvalidDataException("XIAOの応答が重複しました。");
                 }
