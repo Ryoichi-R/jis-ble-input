@@ -38,7 +38,8 @@ Describe 'ARM64 publish package validation' -Tag 'PackageIntegration' {
     }
 
     It 'rejects firmware whose image does not match the recorded hash' {
-        Mock Get-Content -ModuleName PublishLayout -ParameterFilter { $LiteralPath -like '*compatibility.json' } { '{"AppVersion":"1.7.0","Firmware":"0.1.0","Protocol":1,"Images":[{"Name":"xiao-nrf52840.ino.uf2","Sha256":"bad"}]}' }
+        $invalidImages = @{ AppVersion = $version; Firmware = '0.1.0'; Protocol = 1; Images = @(@{ Name = 'xiao-nrf52840.ino.uf2'; Sha256 = 'bad' }) } | ConvertTo-Json -Depth 4
+        Mock Get-Content -ModuleName PublishLayout -ParameterFilter { $LiteralPath -like '*compatibility.json' } { $invalidImages }
         { Test-PublishLayout -PublishPath $publish -Version $version -RuntimeVersion $runtime } | Should -Throw '*PUBLISH_FIRMWARE_HASH_MISMATCH*'
     }
 

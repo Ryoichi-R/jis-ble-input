@@ -1,10 +1,10 @@
 # セキュリティ
 
-対象はアプリ1.7.0、XIAO nRF52840 Sense FW 0.1.0、USB protocol 1です。旧版への修正提供期限は定めていません。修正版が公開された場合は、その説明と互換性を確認してください。
+対象はアプリ1.7.1、XIAO nRF52840 Sense FW 0.1.0、USB protocol 1です。旧版への修正提供期限は定めていません。修正版が公開された場合は、その説明と互換性を確認してください。
 
 ## 脆弱性の非公開報告
 
-公開後はGitHubリポジトリの「Security → Advisories → Report a vulnerability」を非公開報告窓口として使用します。現時点は公開準備中で、窓口はまだ開設していません。公開前に管理者がPrivate vulnerability reportingを有効にし、報告ボタンを確認する必要があります。
+[GitHubの非公開報告窓口](https://github.com/Ryoichi-R/jis-ble-input/security/advisories/new)から報告してください。リポジトリの「Security → Advisories → Report a vulnerability」からも開けます。
 
 報告ボタンが表示されない間は、脆弱性の詳細や再現コードを公開Issueへ投稿しないでください。通常の不具合・要望は[SUPPORT.md](SUPPORT.md)を参照してください。回答期限や修正期限は保証していません。
 

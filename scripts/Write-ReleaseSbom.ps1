@@ -4,13 +4,16 @@ param([Parameter(Mandatory)][string]$PublishPath)
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $projectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+[xml]$definition = [IO.File]::ReadAllText((Join-Path $projectRoot 'src/JisBleInput.App/JisBleInput.App.csproj'))
+$appVersion = [string]$definition.Project.PropertyGroup.Version
+$runtimeVersion = [string]$definition.Project.PropertyGroup.BundledRuntimeVersion
 $publish = [IO.Path]::GetFullPath($PublishPath)
 if (-not $publish.StartsWith($projectRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) { throw 'SBOM_OUTPUT_OUTSIDE_PROJECT' }
 $assets = [IO.File]::ReadAllText((Join-Path $projectRoot '_internal/build-cache/obj/JisBleInput.App/project.assets.json')) | ConvertFrom-Json -AsHashtable
 $components = [Collections.Generic.List[object]]::new()
 $identities = @($assets.libraries.Keys | Where-Object { $assets.libraries[$_].type -eq 'package' })
 foreach ($runtime in @('Microsoft.NETCore.App.Runtime.win-arm64', 'Microsoft.WindowsDesktop.App.Runtime.win-arm64', 'Microsoft.NETCore.App.Host.win-arm64')) {
-    $identities += "$runtime/10.0.14"
+    $identities += "$runtime/$runtimeVersion"
 }
 foreach ($identity in ($identities | Sort-Object -Unique)) {
     $id, $version = $identity.Split('/')
@@ -54,7 +57,7 @@ $bom = [ordered]@{
     bomFormat = 'CycloneDX'; specVersion = '1.6'; serialNumber = 'urn:uuid:' + [guid]::NewGuid().ToString(); version = 1
     metadata = @{
         timestamp = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
-        component = @{ type = 'application'; 'bom-ref' = 'jis-ble-input-1.7.0'; name = 'JIS BLE Input'; version = '1.7.0'; licenses = @(@{ license = @{ id = 'MIT' } }) }
+        component = @{ type = 'application'; 'bom-ref' = "jis-ble-input-$appVersion"; name = 'JIS BLE Input'; version = $appVersion; licenses = @(@{ license = @{ id = 'MIT' } }) }
     }
     components = @($components.ToArray())
     compositions = @(@{ aggregate = 'incomplete'; assemblies = @('seeed-nrf52-sdk-1.1.13') })

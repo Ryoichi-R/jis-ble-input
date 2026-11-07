@@ -1,4 +1,4 @@
-# JIS BLE Input 1.7.0
+# JIS BLE Input 1.7.1
 
 ## 概要
 
@@ -30,7 +30,11 @@ ZIPの配布元とSHA-256を確認し、全体を新しいフォルダーへ展�
 
 入力先のフォーカスとIME状態は受信側で確認する必要があります。Enterで投稿・検索・保存が実行される欄へ改行を含む本文を送らないでください。停止や切断で、すでに入力した文字を自動削除しません。全PC・IMEでの動作保証はなく、内蔵Bluetooth方式とXIAO方式で制約が異なります。対応範囲と未確認項目は「対応範囲と確認状況」と[VALIDATION.md](VALIDATION.md)を参照してください。
 
-## 1.7.0: XIAO（USB接続）方式
+## 1.7.1の修正
+
+停止後の表示にキー解放の結果を保持し、受信側の状態を確認できない場合はその旨を表示します。XIAOの成功応答では状態情報の長さ・内容を検証し、不正な応答を受けた場合は接続を閉じます。自動再送は行いません。
+
+## 1.7.0で追加したXIAO（USB接続）方式
 
 「設定」→「送信方式」で「XIAO（USB接続）」を選び、基板を選択して「PCを追加」を押します。受信Windowsで60秒以内に`JIS BLE Keyboard XXXX`を追加し、アプリの送信先を選びます。以後は「再接続」で登録済みPCを待ちます。切断後に本文を自動再送しません。
 
@@ -151,4 +155,4 @@ APIの根拠は[Microsoft GATT Server](https://learn.microsoft.com/en-us/windows
 
 ## ライセンス
 
-独自コード・素材は[MIT](LICENSE)、第三者の条件は[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)に従います。通常の不具合・要望は[SUPPORT.md](SUPPORT.md)、脆弱性の非公開報告は[SECURITY.md](SECURITY.md)を参照してください。現在は公開準備中で、GitHubの窓口はまだ開設していません。
+独自コード・素材は[MIT](LICENSE)、第三者の条件は[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)に従います。ソースと配布物は[GitHub](https://github.com/Ryoichi-R/jis-ble-input)、通常の不具合・要望は[Issues](https://github.com/Ryoichi-R/jis-ble-input/issues)を参照してください。脆弱性の非公開報告は[SECURITY.md](SECURITY.md)の手順に従ってください。

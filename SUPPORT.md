@@ -1,6 +1,6 @@
 # 問い合わせ
 
-公開後の通常の不具合・要望はGitHubリポジトリのIssuesで受け付けます。現在は公開準備中です。公開時にREADMEから実際の窓口へリンクします。脆弱性の詳細は公開Issueに書かず、[SECURITY.md](SECURITY.md)の非公開報告手順に従ってください。
+通常の不具合・要望は[GitHub Issues](https://github.com/Ryoichi-R/jis-ble-input/issues)で受け付けます。脆弱性の詳細は公開Issueに書かず、[SECURITY.md](SECURITY.md)の非公開報告手順に従ってください。
 
 報告には次の情報を添えてください。
 
