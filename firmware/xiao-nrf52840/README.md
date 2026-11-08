@@ -1,6 +1,6 @@
 # XIAO nRF52840 Sense / JIS BLE Keyboard 0.1.0
 
-アプリ1.7.1と互換性があるXIAO nRF52840 Sense（通常時PID 8045）用FW 0.1.0です。USB protocol 1を使用します。実機受入に使用した配布ZIPは `jis-ble-input-1.7.0-xiao-preview.7-win-arm64.zip` です。2026-11-05〜06にWindows ARM64標準ドライバー（usbser）での接続、DFUによる書込、BLE接続、受信Windowsでのキーボード分類と再起動後の維持、日本語・混在文の入力、停止・接続障害からの復帰を利用者報告で確認しました。試験範囲はアプリ同梱の `VALIDATION.md` を参照してください。
+アプリ1.7.1・1.8.0に対応するXIAO nRF52840 Sense（通常時PID 8045）用FW 0.1.0です。USB protocol 1を使用します。実機受入に使用した配布ZIPは `jis-ble-input-1.7.0-xiao-preview.7-win-arm64.zip` です。2026-11-05〜06にWindows ARM64標準ドライバー（usbser）での接続、DFUによる書込、BLE接続、受信Windowsでのキーボード分類と再起動後の維持、日本語・混在文の入力、停止・接続障害からの復帰を利用者報告で確認しました。試験範囲はアプリ同梱の `VALIDATION.md` を参照してください。
 
 ## 使い始めるまで
 

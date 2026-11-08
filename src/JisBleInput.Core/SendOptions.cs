@@ -1,7 +1,7 @@
 namespace JisBleInput.Core;
 
 public enum TextInputMode { Japanese, Ascii }
-public enum JapaneseSpeed { Standard, SlightlyFaster, Faster }
+public enum JapaneseSpeed { Standard, SlightlyFaster, Faster, Trial600, Trial500, Trial400, Trial350 }
 public enum AsciiSpeed { Relaxed, Fast, Fastest }
 public enum ReceiverKeyboardLayout { JapaneseJis, EnglishUs }
 

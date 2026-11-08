@@ -471,6 +471,32 @@ await quickSender.SendAsync("A橋\r\n日本。", destination, allowLineBreaks: t
 Check(quickReceiver.Output == "A橋\r\n日本。" && quickSender.ProgressInfo.ActiveElapsed == TimeSpan.FromSeconds(4.85),
     "quick Japanese uses unchanged conversion and newline semantics through the sender");
 
+foreach (var (speed, milliseconds) in new[] { (JapaneseSpeed.Trial600, 600), (JapaneseSpeed.Trial500, 500),
+    (JapaneseSpeed.Trial400, 400), (JapaneseSpeed.Trial350, 350) })
+{
+    const string text = "橋・箸・端 ABC！\r\n\r\n橋\r\n";
+    var snapshot = TextSnapshot.Create(text, allowLineBreaks: true);
+    foreach (var unit in snapshot.Units.Where(unit => !unit.IsLineBreak))
+    {
+        var baseline = ImeKeyEncoder.EncodeCharacter(unit.Character, JapaneseSpeed.Faster);
+        var trial = ImeKeyEncoder.EncodeCharacter(unit.Character, speed);
+        Check(trial.Sum(step => step.DelayMilliseconds) == milliseconds
+            && trial.Select(step => step.Stroke).SequenceEqual(baseline.Select(step => step.Stroke))
+            && trial.Where((_, index) => index is not (1 or 3 or 13 or 15))
+                .SequenceEqual(baseline.Where((_, index) => index is not (1 or 3 or 13 or 15))),
+            $"{speed} changes only the intended IME settling delays");
+    }
+    var receiver = new Receiver(InputMode.Off) { IgnoreLang1 = true, DriftOnCommit = true, LineEnding = "\r\n" };
+    var trialClock = new ManualClock();
+    var trialSender = new StagedSender(new FakeTransport(destination) { Receive = receiver.Accept },
+        (ms, _) => { trialClock.Advance(TimeSpan.FromMilliseconds(ms)); return Task.CompletedTask; }, trialClock);
+    await trialSender.SendSnapshotAsync(snapshot, destination, new SendOptions(Speed: speed));
+    var lines = snapshot.Units.Count(unit => unit.IsLineBreak);
+    Check(trialSender.State == SendState.KeysSent && receiver.Output == text
+        && trialSender.ProgressInfo.ActiveElapsed == TimeSpan.FromMilliseconds((snapshot.UnitCount - lines) * milliseconds + lines * 350),
+        $"{speed} preserves exact text in the receiver model and records elapsed time including Enter for each newline");
+}
+
 var jis = ReceiverKeyboardLayout.JapaneseJis;
 var us = ReceiverKeyboardLayout.EnglishUs;
 foreach (var expected in new (char Character, ReceiverKeyboardLayout Layout, byte Modifier, byte Usage)[]
@@ -652,6 +678,18 @@ foreach (var badIndex in new[] { -1, 3 })
     Check(settings.Capture() == beforeInvalidSelection, "invalid speed selection leaves the draft settings intact");
 }
 await RejectAsync(() => { settings.SetMode((TextInputMode)99); return Task.CompletedTask; }, "selection model rejects unknown input content");
+
+var trialSettings = new InputSettings();
+trialSettings.SetSpeed((int)JapaneseSpeed.Faster);
+trialSettings.SetSpeed((int)JapaneseSpeed.Trial350, allowXiaoTrials: true);
+Check(trialSettings.Capture().Speed == JapaneseSpeed.Trial350 && trialSettings.Description.Contains("0.35")
+    && trialSettings.ToPreferences().JapaneseSpeed == JapaneseSpeed.Faster, "a trial speed is captured but not saved over the regular Japanese speed");
+trialSettings.SetMode(TextInputMode.Ascii);
+await RejectAsync(() => { trialSettings.SetSpeed((int)JapaneseSpeed.Trial350, allowXiaoTrials: true); return Task.CompletedTask; },
+    "XIAO trial speeds are not accepted for ASCII");
+trialSettings.ClearTrialSpeed();
+trialSettings.SetMode(TextInputMode.Japanese);
+Check(trialSettings.Capture().Speed == JapaneseSpeed.Faster, "leaving the trial transport restores the regular Japanese speed");
 await RejectAsync(() => { settings.SetLayout((ReceiverKeyboardLayout)99); return Task.CompletedTask; }, "selection model rejects unknown keyboard layout");
 Check(settings.Capture() == beforeInvalidSelection, "invalid content or layout cannot overwrite the valid selection");
 
@@ -759,7 +797,7 @@ var goodInputBytes = File.ReadAllBytes(inputPath);
 try { inputStore.Save(new InputPreferences(JapaneseSpeed: (JapaneseSpeed)99)); Check(false, "invalid input save must be rejected"); }
 catch (InvalidDataException) { Check(true, "invalid input preference save is rejected before filesystem mutation"); }
 Check(File.ReadAllBytes(inputPath).SequenceEqual(goodInputBytes), "rejected input save preserves the last valid file");
-foreach (var malformed in new[] { "null", "{", "{\"Version\":2}", "{\"Mode\":\"Kana\"}", "{\"AsciiSpeed\":9}", new string(' ', 4097) })
+foreach (var malformed in new[] { "null", "{", "{\"Version\":2}", "{\"Mode\":\"Kana\"}", "{\"AsciiSpeed\":9}", "{\"JapaneseSpeed\":\"Trial350\"}", new string(' ', 4097) })
 {
     File.WriteAllText(inputPath, malformed);
     try { _ = inputStore.Load(); Check(false, "malformed input preferences must be rejected"); }

@@ -11,7 +11,7 @@
         <PublishTrimmed>false</PublishTrimmed>
         <DebugType>none</DebugType>
         <AssemblyName>JisBleInput</AssemblyName>
-        <Version>1.7.1</Version>
+        <Version>1.8.0</Version>
         <Authors>Ryoichi-R</Authors>
         <Copyright>Copyright (c) 2026 Ryoichi-R and contributors</Copyright>
         <PackageLicenseExpression>MIT</PackageLicenseExpression>
@@ -42,8 +42,8 @@
             <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
             <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
         </Content>
-        <Content Include="../../docs/XIAO-PROTOCOL.md">
-            <Link>docs/XIAO-PROTOCOL.md</Link>
+        <Content Include="../../docs/XIAO-PROTOCOL.md;../../docs/XIAO-SPEED-TRIAL.md">
+            <Link>docs/%(Filename)%(Extension)</Link>
             <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
             <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
         </Content>

@@ -84,7 +84,7 @@ internal sealed class MainWindow : Window
     private readonly TextBlock connection = Label("未公開。受信PCのBluetooth設定で、このSurfaceとペアリングします。");
     private readonly TextBlock startupDetails = Label("接続診断: 未開始");
     private readonly TextBlock message = Label("");
-    private readonly TextBlock progress = Label("キー送信はまだ行っていません。");
+    private readonly TextBlock progress = Named(Label("キー送信はまだ行っていません。"), "TransferProgress");
     private readonly TextBlock caps = Label("接続先を選択してください。");
     private readonly TextBlock draftInfo = Label("");
     private readonly ProgressBar progressBar = new() { Minimum = 0, Maximum = 100, Height = 8, Margin = new Thickness(0, 8, 0, 0) };
@@ -132,7 +132,7 @@ internal sealed class MainWindow : Window
         autoReconnect.IsChecked = connectionPreferences.AutoReconnect;
         inputStore = new InputPreferencesStore(Path.Combine(preferencesRoot, "input-preferences.json"));
         try { inputSettings.Restore(inputStore.Load()); }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException)
+        catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException or JsonException)
         {
             message.Text = "前回の入力方法・速度を読み込めませんでした。初期設定で開きます。";
         }
@@ -271,7 +271,7 @@ internal sealed class MainWindow : Window
         inputSpeed.SelectionChanged += (_, _) =>
         {
             if (updatingSettings || inputSpeed.SelectedIndex < 0) return;
-            inputSettings.SetSpeed(inputSpeed.SelectedIndex);
+            inputSettings.SetSpeed(inputSpeed.SelectedIndex, !bluetooth.UsesLocalBluetooth);
             SaveInputPreferences();
             UpdateMode();
         };
@@ -470,6 +470,7 @@ internal sealed class MainWindow : Window
         finally
         {
             updatingTransport = true; connectionMethod.SelectedIndex = bluetooth.UsesLocalBluetooth ? 0 : 1; updatingTransport = false;
+            UpdateMode();
             working = false; operation = null; completed.TrySetResult(); UpdateConnection();
         }
     }
@@ -692,11 +693,13 @@ internal sealed class MainWindow : Window
 
     private void UpdateMode()
     {
+        var allowXiaoTrials = !bluetooth.UsesLocalBluetooth;
+        if (!allowXiaoTrials) inputSettings.ClearTrialSpeed();
         updatingSettings = true;
         try
         {
             inputMode.SelectedIndex = inputSettings.Mode == TextInputMode.Ascii ? 1 : 0;
-            inputSpeed.ItemsSource = InputSettings.SpeedLabels(inputSettings.Mode);
+            inputSpeed.ItemsSource = InputSettings.SpeedLabels(inputSettings.Mode, allowXiaoTrials);
             inputSpeed.SelectedIndex = inputSettings.SpeedIndex;
             receiverLayout.SelectedIndex = inputSettings.Layout == ReceiverKeyboardLayout.EnglishUs ? 1 : 0;
         }
@@ -818,7 +821,8 @@ internal sealed class MainWindow : Window
             SendState.KeysSent => "キー列送信済み",
             _ => "キー列処理"
         };
-        progress.Text = $"{state} {info.ProcessedCharacters:N0}/{info.TotalCharacters:N0} · 残り {remaining}";
+        var time = sender.State == SendState.KeysSent ? $"処理時間 {FormatDuration(info.ActiveElapsed)}" : $"残り {remaining}";
+        progress.Text = $"{state} {info.ProcessedCharacters:N0}/{info.TotalCharacters:N0} · {time}";
         progress.ToolTip = $"処理時間 {FormatDuration(info.ActiveElapsed)}。受信結果は手動で確認してください。";
     }
 

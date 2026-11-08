@@ -64,7 +64,8 @@ function Test-PublishLayout {
         'firmware/licenses/sdk/LGPL-2.1.txt', 'firmware/licenses/sdk/libraries/Adafruit_nRFCrypto/src/cortex-m4/license.txt',
         'firmware/licenses/sdk/libraries/Adafruit_nRFCrypto/src/nrf_cc310/license.txt',
         'samples/ascii-url.txt', 'samples/ascii-printable.txt', 'samples/multiline-crlf.txt',
-        'samples/multiline-lf.txt', 'samples/AC-08-100.txt', 'samples/AC-08-1000.txt'
+        'samples/multiline-lf.txt', 'samples/AC-08-100.txt', 'samples/AC-08-1000.txt',
+        'docs/XIAO-SPEED-TRIAL.md', 'samples/xiao-japanese-trial.txt', 'samples/Compare-XiaoTrialText.ps1'
     )
     foreach ($relative in $required) {
         $path = Join-Path $PublishPath $relative

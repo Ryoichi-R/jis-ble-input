@@ -11,7 +11,8 @@ public sealed record InputPreferences(int Version = 1,
 {
     public void Validate()
     {
-        if (Version != 1 || !Enum.IsDefined(Mode) || !Enum.IsDefined(JapaneseSpeed) || !Enum.IsDefined(AsciiSpeed) || !Enum.IsDefined(Layout))
+        if (Version != 1 || !Enum.IsDefined(Mode) || !Enum.IsDefined(JapaneseSpeed) || JapaneseSpeed > JapaneseSpeed.Faster
+            || !Enum.IsDefined(AsciiSpeed) || !Enum.IsDefined(Layout))
             throw new InvalidDataException("入力設定の形式に対応していません。");
     }
 }

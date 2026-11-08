@@ -322,6 +322,18 @@ internal static class UiTestProgram
                     await window.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Background);
                     Check(connection.Selections == 1 && status.Text == "接続済み" && placeholder.Visibility == Visibility.Collapsed,
                         "choosing the XIAO PC clears the guidance and becomes ready");
+                    var speed = Find<ComboBox>(window, "InputSpeed");
+                    Check(speed.Items.Count == 7 && speed.Items[6].ToString()!.Contains("0.35"), "XIAO exposes four labeled Japanese trial speeds");
+                    speed.SelectedIndex = 2;
+                    speed.SelectedIndex = 6;
+                    Find<TextBox>(window, "Editor").Text = "橋";
+                    await window.SendToAsync(connection.Target!);
+                    await window.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Background);
+                    Check(Find<TextBlock>(window, "TransferProgress").Text.Contains("処理時間"), "completed trial displays measured send duration");
+                    window.OpenSettings();
+                    Find<ComboBox>(window.OwnedWindows.Cast<Window>().Single(), "ConnectionMethod").SelectedIndex = 0;
+                    await window.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Background);
+                    Check(speed.Items.Count == 3 && speed.SelectedIndex == 2, "switching from XIAO to local Bluetooth clears the trial speed");
                 }
             }
             finally { window.PrepareForSessionEnd(); window.Close(); }
