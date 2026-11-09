@@ -88,17 +88,18 @@ public static class ImeKeyEncoder
             int[] slowerDelays = [50, 70, 50, 130, 25, 25, 25, 25, 25, 25, 25, 25, 50, 200, 50, 100];
             return steps.Select((step, index) => step with { DelayMilliseconds = slowerDelays[index] }).ToArray();
         }
-        // Trials vary only the settling time after the mode keys, F5 and Enter.
-        var (imeOn, hiragana, convert, commit) = speed switch
+        // XIAO presets use shorter key holds and IME settling waits.
+        var (keyDelay, digitDelay, imeOn, hiragana, convert, commit) = speed switch
         {
-            JapaneseSpeed.Faster => (60, 100, 150, 70),
-            JapaneseSpeed.Trial600 => (45, 70, 115, 50),
-            JapaneseSpeed.Trial500 => (30, 45, 75, 30),
-            JapaneseSpeed.Trial400 => (15, 20, 30, 15),
-            JapaneseSpeed.Trial350 => (5, 5, 15, 5),
+            JapaneseSpeed.Faster => (40, 20, 60, 100, 150, 70),
+            JapaneseSpeed.XiaoSlow => (10, 5, 1, 1, 15, 3),
+            JapaneseSpeed.XiaoStandard => (4, 2, 1, 1, 15, 1),
+            JapaneseSpeed.XiaoFastest => (2, 1, 1, 1, 6, 1),
             _ => throw new ArgumentException("日本語入力の速度を確認してください。")
         };
-        int[] delays = [40, imeOn, 40, hiragana, 20, 20, 20, 20, 20, 20, 20, 20, 40, convert, 40, commit];
+        int[] delays = [keyDelay, imeOn, keyDelay, hiragana,
+            digitDelay, digitDelay, digitDelay, digitDelay, digitDelay, digitDelay, digitDelay, digitDelay,
+            keyDelay, convert, keyDelay, commit];
         return steps.Select((step, index) => step with { DelayMilliseconds = delays[index] }).ToArray();
     }
 

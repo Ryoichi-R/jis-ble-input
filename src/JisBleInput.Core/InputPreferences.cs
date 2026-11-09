@@ -3,16 +3,21 @@ using System.Text.Json.Serialization;
 
 namespace JisBleInput.Core;
 
+public enum XiaoSpeedPreset { Slow, Standard, Fastest }
+
 public sealed record InputPreferences(int Version = 1,
     TextInputMode Mode = TextInputMode.Japanese,
     JapaneseSpeed JapaneseSpeed = JapaneseSpeed.Standard,
     AsciiSpeed AsciiSpeed = AsciiSpeed.Fast,
-    ReceiverKeyboardLayout Layout = ReceiverKeyboardLayout.JapaneseJis)
+    ReceiverKeyboardLayout Layout = ReceiverKeyboardLayout.JapaneseJis,
+    XiaoSpeedPreset XiaoJapanesePreset = XiaoSpeedPreset.Standard,
+    XiaoSpeedPreset XiaoAsciiPreset = XiaoSpeedPreset.Standard)
 {
     public void Validate()
     {
         if (Version != 1 || !Enum.IsDefined(Mode) || !Enum.IsDefined(JapaneseSpeed) || JapaneseSpeed > JapaneseSpeed.Faster
-            || !Enum.IsDefined(AsciiSpeed) || !Enum.IsDefined(Layout))
+            || !Enum.IsDefined(AsciiSpeed) || AsciiSpeed > AsciiSpeed.Fastest || !Enum.IsDefined(Layout)
+            || !Enum.IsDefined(XiaoJapanesePreset) || !Enum.IsDefined(XiaoAsciiPreset))
             throw new InvalidDataException("入力設定の形式に対応していません。");
     }
 }

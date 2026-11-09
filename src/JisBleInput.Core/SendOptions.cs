@@ -1,8 +1,8 @@
 namespace JisBleInput.Core;
 
 public enum TextInputMode { Japanese, Ascii }
-public enum JapaneseSpeed { Standard, SlightlyFaster, Faster, Trial600, Trial500, Trial400, Trial350 }
-public enum AsciiSpeed { Relaxed, Fast, Fastest }
+public enum JapaneseSpeed { Standard, SlightlyFaster, Faster, XiaoSlow, XiaoStandard, XiaoFastest }
+public enum AsciiSpeed { Relaxed, Fast, Fastest, XiaoStandard, XiaoFastest }
 public enum ReceiverKeyboardLayout { JapaneseJis, EnglishUs }
 
 // A value captured with the text and destination, never read from changing UI state.

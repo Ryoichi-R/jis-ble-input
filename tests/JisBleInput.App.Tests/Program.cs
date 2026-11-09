@@ -4,6 +4,7 @@ using System.Windows.Threading;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Controls;
+using System.Windows.Input;
 using JisBleInput.App;
 using JisBleInput.Core;
 
@@ -68,18 +69,28 @@ internal static class UiTestProgram
 
         var editor = Find<TextBox>(window, "Editor");
         var send = Find<Button>(window, "SendButton");
+        var clear = Find<Button>(window, "ClearDraftButton");
+        var paste = Find<Button>(window, "PasteDraftButton");
         var pause = Find<Button>(window, "PauseButton");
         var resume = Find<Button>(window, "ResumeButton");
         var stop = Find<Button>(window, "StopButton");
         Check(editor.AcceptsReturn && !editor.AcceptsTab, "Enter retains multiline input while Tab navigates instead of inserting unsupported text");
-        Check(pause.Visibility == Visibility.Collapsed && resume.Visibility == Visibility.Collapsed && stop.Visibility == Visibility.Collapsed,
-            "idle mode shows only the primary send action");
+        Check(clear.IsVisible && clear.IsEnabled && paste.IsVisible && paste.IsEnabled && pause.Visibility == Visibility.Collapsed
+            && resume.Visibility == Visibility.Collapsed && stop.Visibility == Visibility.Collapsed,
+            "idle mode shows send, clear and paste without transfer controls");
         Check(Find<TextBlock>(window, "HostPlaceholder").Visibility == Visibility.Visible, "an empty connection selector has a visible label");
 
         window.Width = window.MinWidth;
         window.Height = window.MinHeight;
         await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
-        Check(IsWithinContent(editor, window) && IsWithinContent(send, window), "editor and send action fit at the minimum size");
+        Check(IsWithinContent(editor, window) && IsWithinContent(send, window) && IsWithinContent(clear, window) && IsWithinContent(paste, window),
+            "editor and all idle buttons fit at the minimum size");
+        var rowWidth = send.ActualWidth + clear.ActualWidth + paste.ActualWidth;
+        Check(clear.TranslatePoint(new Point(0, 0), window).X > send.TranslatePoint(new Point(send.ActualWidth, 0), window).X
+            && paste.TranslatePoint(new Point(0, 0), window).X > clear.TranslatePoint(new Point(clear.ActualWidth, 0), window).X
+            && send.ActualWidth / rowWidth is >= 0.56 and <= 0.65
+            && clear.ActualWidth / rowWidth is >= 0.16 and <= 0.24 && paste.ActualWidth / rowWidth is >= 0.16 and <= 0.24,
+            "the idle row orders send, clear and paste with widths of about 3:1:1");
         Check(editor.ActualHeight >= 80 && send.ActualHeight >= 32, "the minimum window retains usable input and button heights");
         if (previewPath is not null) SavePreview(window, Path.ChangeExtension(previewPath, ".minimum.png"));
         window.Width = 440;
@@ -110,10 +121,26 @@ internal static class UiTestProgram
         var draft = Find<TextBlock>(window, "DraftInfo");
         Check(draft.Text.Contains("改行3") && draft.ToolTip?.ToString()?.Contains("末尾改行あり") == true,
             "compact counts preserve the CRLF Enter count and trailing-newline warning");
+        clear.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Check(editor.Text.Length == 0 && draft.Text == "0 / 2,000文字 · 改行0"
+            && !Find<TextBlock>(window, "TransferProgress").IsVisible, "clear only empties the sender draft and refreshes its counts");
+        editor.Text = "A?B";
+        editor.Select(1, 1);
+        ExecutedRoutedEventHandler simulatedPaste = (_, args) =>
+        {
+            if (args.Command != ApplicationCommands.Paste) return;
+            editor.SelectedText = "橋";
+            args.Handled = true;
+        };
+        CommandManager.AddPreviewExecutedHandler(editor, simulatedPaste);
+        try { paste.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); }
+        finally { CommandManager.RemovePreviewExecutedHandler(editor, simulatedPaste); }
+        Check(editor.Text == "A橋B" && !Find<TextBlock>(window, "TransferProgress").IsVisible,
+            "paste routes the native paste command to the editor selection without starting a send");
 
         window.ApplyTransferControls(SendState.Sending, true, false, true);
-        Check(pause.IsVisible && pause.IsEnabled && stop.IsVisible && stop.IsEnabled && !send.IsEnabled,
-            "sending exposes pause and stop without enabling a second send");
+        Check(pause.IsVisible && pause.IsEnabled && stop.IsVisible && stop.IsEnabled && !send.IsEnabled && !clear.IsEnabled && !paste.IsEnabled,
+            "sending exposes pause and stop while send, clear and paste are disabled");
         window.ApplyTransferControls(SendState.Paused, true, false, true);
         Check(resume.IsVisible && resume.IsEnabled && send.Visibility == Visibility.Collapsed && stop.IsEnabled,
             "paused mode makes resume the primary action and retains stop");
@@ -323,17 +350,25 @@ internal static class UiTestProgram
                     Check(connection.Selections == 1 && status.Text == "接続済み" && placeholder.Visibility == Visibility.Collapsed,
                         "choosing the XIAO PC clears the guidance and becomes ready");
                     var speed = Find<ComboBox>(window, "InputSpeed");
-                    Check(speed.Items.Count == 7 && speed.Items[6].ToString()!.Contains("0.35"), "XIAO exposes four labeled Japanese trial speeds");
+                    var mode = Find<ComboBox>(window, "InputMode");
+                    Check(speed.Items.Cast<string>().SequenceEqual(new[] { "遅め（0.10秒/文字）", "標準（0.05秒/文字）", "最速（0.025秒/文字）" })
+                        && speed.SelectedIndex == 1, "XIAO Japanese shows three production presets and defaults to standard");
                     speed.SelectedIndex = 2;
-                    speed.SelectedIndex = 6;
+                    mode.SelectedIndex = 1;
+                    Check(speed.Items.Cast<string>().SequenceEqual(new[] { "遅め（0.05秒/文字）", "標準（0.01秒/文字）", "最速（0.005秒/文字）" })
+                        && speed.SelectedIndex == 1, "XIAO ASCII shows three production presets and defaults to standard");
+                    speed.SelectedIndex = 2;
+                    mode.SelectedIndex = 0;
                     Find<TextBox>(window, "Editor").Text = "橋";
                     await window.SendToAsync(connection.Target!);
                     await window.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Background);
-                    Check(Find<TextBlock>(window, "TransferProgress").Text.Contains("処理時間"), "completed trial displays measured send duration");
+                    Check(Find<TextBlock>(window, "TransferProgress").Text.Contains("処理時間"), "completed XIAO send displays measured duration");
                     window.OpenSettings();
                     Find<ComboBox>(window.OwnedWindows.Cast<Window>().Single(), "ConnectionMethod").SelectedIndex = 0;
                     await window.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Background);
-                    Check(speed.Items.Count == 3 && speed.SelectedIndex == 2, "switching from XIAO to local Bluetooth clears the trial speed");
+                    Check(speed.Items.Count == 3 && speed.SelectedIndex == 0, "switching to local Bluetooth restores the local Japanese speed");
+                    mode.SelectedIndex = 1;
+                    Check(speed.Items.Count == 3 && speed.SelectedIndex == 1, "switching to local Bluetooth restores the local ASCII speed");
                 }
             }
             finally { window.PrepareForSessionEnd(); window.Close(); }

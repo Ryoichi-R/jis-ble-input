@@ -19,10 +19,17 @@ public static class AsciiKeyEncoder
     public static IReadOnlyList<KeyStep> EncodeCharacter(char character, ReceiverKeyboardLayout layout,
         AsciiSpeed speed = AsciiSpeed.Fast)
     {
-        if (!Enum.IsDefined(speed)) throw new ArgumentException("英数字の入力速度を確認してください。");
+        var (press, release) = speed switch
+        {
+            AsciiSpeed.Relaxed => (60, 60),
+            AsciiSpeed.Fast => (40, 40),
+            AsciiSpeed.Fastest => (25, 25),
+            AsciiSpeed.XiaoStandard => (5, 5),
+            AsciiSpeed.XiaoFastest => (3, 2),
+            _ => throw new ArgumentException("英数字の入力速度を確認してください。")
+        };
         var stroke = ToStroke(character, layout);
-        var delay = speed switch { AsciiSpeed.Relaxed => 60, AsciiSpeed.Fast => 40, _ => 25 };
-        return [new(stroke, delay), new(default, delay)];
+        return [new(stroke, press), new(default, release)];
     }
 
     public static KeyStroke ToStroke(char character, ReceiverKeyboardLayout layout)

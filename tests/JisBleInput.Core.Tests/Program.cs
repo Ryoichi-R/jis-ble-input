@@ -471,20 +471,20 @@ await quickSender.SendAsync("A橋\r\n日本。", destination, allowLineBreaks: t
 Check(quickReceiver.Output == "A橋\r\n日本。" && quickSender.ProgressInfo.ActiveElapsed == TimeSpan.FromSeconds(4.85),
     "quick Japanese uses unchanged conversion and newline semantics through the sender");
 
-foreach (var (speed, milliseconds) in new[] { (JapaneseSpeed.Trial600, 600), (JapaneseSpeed.Trial500, 500),
-    (JapaneseSpeed.Trial400, 400), (JapaneseSpeed.Trial350, 350) })
+foreach (var (speed, milliseconds, conversionWait) in new[] { (JapaneseSpeed.XiaoSlow, 100, 15),
+    (JapaneseSpeed.XiaoStandard, 50, 15), (JapaneseSpeed.XiaoFastest, 25, 6) })
 {
     const string text = "橋・箸・端 ABC！\r\n\r\n橋\r\n";
     var snapshot = TextSnapshot.Create(text, allowLineBreaks: true);
     foreach (var unit in snapshot.Units.Where(unit => !unit.IsLineBreak))
     {
-        var baseline = ImeKeyEncoder.EncodeCharacter(unit.Character, JapaneseSpeed.Faster);
-        var trial = ImeKeyEncoder.EncodeCharacter(unit.Character, speed);
-        Check(trial.Sum(step => step.DelayMilliseconds) == milliseconds
-            && trial.Select(step => step.Stroke).SequenceEqual(baseline.Select(step => step.Stroke))
-            && trial.Where((_, index) => index is not (1 or 3 or 13 or 15))
-                .SequenceEqual(baseline.Where((_, index) => index is not (1 or 3 or 13 or 15))),
-            $"{speed} changes only the intended IME settling delays");
+        var baseline = ImeKeyEncoder.EncodeCharacter(unit.Character);
+        var steps = ImeKeyEncoder.EncodeCharacter(unit.Character, speed);
+        Check(steps.Sum(step => step.DelayMilliseconds) == milliseconds
+            && steps.Select(step => step.Stroke).SequenceEqual(baseline.Select(step => step.Stroke)),
+            $"{speed} has the advertised fixed wait and keeps the same IME key sequence");
+        Check(steps.All(step => step.DelayMilliseconds > 0) && steps[13].DelayMilliseconds == conversionWait,
+            $"{speed} keeps a positive wait after each report and the selected F5 conversion wait");
     }
     var receiver = new Receiver(InputMode.Off) { IgnoreLang1 = true, DriftOnCommit = true, LineEnding = "\r\n" };
     var trialClock = new ManualClock();
@@ -645,12 +645,12 @@ Check(wrongLayoutQueue.State == SendState.KeysSent && wrongLayoutReceiver.Output
 
 // Selection state is shared with the UI, but a running send owns its captured value.
 var settings = new InputSettings();
-Check(settings.Capture() == new SendOptions() && settings.SpeedIndex == 0,
+Check(settings.Capture() == new SendOptions() && settings.GetSpeedIndex() == 0,
     "separate selectors initially retain standard Japanese and the prior defaults");
 settings.SetSpeed(1);
 var japaneseSelection = settings.Capture();
 settings.SetMode(TextInputMode.Ascii);
-Check(settings.SpeedIndex == 1 && settings.Capture().DirectSpeed == AsciiSpeed.Fast,
+Check(settings.GetSpeedIndex() == 1 && settings.Capture().DirectSpeed == AsciiSpeed.Fast,
     "first switch to ASCII selects the previously working fast timing");
 settings.SetSpeed(0);
 settings.SetLayout(us);
@@ -658,17 +658,17 @@ var relaxedSelection = settings.Capture();
 Check(relaxedSelection.Mode == TextInputMode.Ascii && relaxedSelection.DirectSpeed == AsciiSpeed.Relaxed
     && relaxedSelection.Layout == us, "ASCII speed and receiver layout are independent draft selections");
 settings.SetMode(TextInputMode.Japanese);
-Check(settings.SpeedIndex == 1 && settings.Capture().Speed == JapaneseSpeed.SlightlyFaster,
+Check(settings.GetSpeedIndex() == 1 && settings.Capture().Speed == JapaneseSpeed.SlightlyFaster,
     "switching input content back restores that mode's Japanese speed");
 settings.SetSpeed(0);
 settings.SetMode(TextInputMode.Ascii);
-Check(settings.SpeedIndex == 0 && settings.Capture().DirectSpeed == AsciiSpeed.Relaxed
+Check(settings.GetSpeedIndex() == 0 && settings.Capture().DirectSpeed == AsciiSpeed.Relaxed
     && settings.Capture().Layout == us, "ASCII speed and layout survive a round trip through Japanese settings");
 Check(japaneseSelection.Mode == TextInputMode.Japanese && japaneseSelection.Speed == JapaneseSpeed.SlightlyFaster
     && relaxedSelection.DirectSpeed == AsciiSpeed.Relaxed, "earlier captures are immutable after later selector changes");
 settings.SetMode(TextInputMode.Japanese); settings.SetSpeed(2);
 settings.SetMode(TextInputMode.Ascii); settings.SetSpeed(2);
-Check(settings.Capture() is { Speed: JapaneseSpeed.Faster, DirectSpeed: AsciiSpeed.Fastest } && settings.SpeedIndex == 2
+Check(settings.Capture() is { Speed: JapaneseSpeed.Faster, DirectSpeed: AsciiSpeed.Fastest } && settings.GetSpeedIndex() == 2
     && InputSettings.SpeedLabels(TextInputMode.Japanese).Count == 3 && InputSettings.SpeedLabels(TextInputMode.Ascii).Count == 3,
     "the third selector entry chooses the new fastest timing for each input method");
 var beforeInvalidSelection = settings.Capture();
@@ -679,17 +679,25 @@ foreach (var badIndex in new[] { -1, 3 })
 }
 await RejectAsync(() => { settings.SetMode((TextInputMode)99); return Task.CompletedTask; }, "selection model rejects unknown input content");
 
-var trialSettings = new InputSettings();
-trialSettings.SetSpeed((int)JapaneseSpeed.Faster);
-trialSettings.SetSpeed((int)JapaneseSpeed.Trial350, allowXiaoTrials: true);
-Check(trialSettings.Capture().Speed == JapaneseSpeed.Trial350 && trialSettings.Description.Contains("0.35")
-    && trialSettings.ToPreferences().JapaneseSpeed == JapaneseSpeed.Faster, "a trial speed is captured but not saved over the regular Japanese speed");
-trialSettings.SetMode(TextInputMode.Ascii);
-await RejectAsync(() => { trialSettings.SetSpeed((int)JapaneseSpeed.Trial350, allowXiaoTrials: true); return Task.CompletedTask; },
-    "XIAO trial speeds are not accepted for ASCII");
-trialSettings.ClearTrialSpeed();
-trialSettings.SetMode(TextInputMode.Japanese);
-Check(trialSettings.Capture().Speed == JapaneseSpeed.Faster, "leaving the trial transport restores the regular Japanese speed");
+var xiaoSettings = new InputSettings();
+Check(xiaoSettings.GetSpeedIndex(useXiao: true) == 1
+    && xiaoSettings.Capture(useXiao: true) is { Speed: JapaneseSpeed.XiaoStandard, DirectSpeed: AsciiSpeed.XiaoStandard },
+    "both XIAO modes start with the standard preset");
+foreach (var (index, japanese, ascii) in new[] { (0, JapaneseSpeed.XiaoSlow, AsciiSpeed.Fastest),
+    (1, JapaneseSpeed.XiaoStandard, AsciiSpeed.XiaoStandard), (2, JapaneseSpeed.XiaoFastest, AsciiSpeed.XiaoFastest) })
+{
+    xiaoSettings.SetMode(TextInputMode.Japanese);
+    xiaoSettings.SetSpeed(index, useXiao: true);
+    xiaoSettings.SetMode(TextInputMode.Ascii);
+    xiaoSettings.SetSpeed(index, useXiao: true);
+    var selected = xiaoSettings.Capture(useXiao: true);
+    Check(selected.Speed == japanese && selected.DirectSpeed == ascii, "each XIAO preset selects its timing in both modes");
+}
+await RejectAsync(() => { xiaoSettings.SetSpeed(3, useXiao: true); return Task.CompletedTask; },
+    "the XIAO selector has exactly three presets");
+Check(xiaoSettings.Capture() is { Speed: JapaneseSpeed.Standard, DirectSpeed: AsciiSpeed.Fast }
+    && xiaoSettings.Capture(useXiao: true) is { Speed: JapaneseSpeed.XiaoFastest, DirectSpeed: AsciiSpeed.XiaoFastest },
+    "changing XIAO speeds leaves the local Bluetooth settings independent");
 await RejectAsync(() => { settings.SetLayout((ReceiverKeyboardLayout)99); return Task.CompletedTask; }, "selection model rejects unknown keyboard layout");
 Check(settings.Capture() == beforeInvalidSelection, "invalid content or layout cannot overwrite the valid selection");
 
@@ -707,7 +715,12 @@ foreach (var layout in Enum.GetValues<ReceiverKeyboardLayout>())
         var body = printableAscii + "\r\n" + url;
         await queue.SendAsync(body, destination, allowLineBreaks: true,
             options: new(Mode: TextInputMode.Ascii, Layout: layout, DirectSpeed: speed));
-        var perCharacter = speed switch { AsciiSpeed.Relaxed => 120, AsciiSpeed.Fast => 80, _ => 50 };
+        var perCharacter = speed switch
+        {
+            AsciiSpeed.Relaxed => 120, AsciiSpeed.Fast => 80, AsciiSpeed.Fastest => 50,
+            AsciiSpeed.XiaoStandard => 10, AsciiSpeed.XiaoFastest => 5,
+            _ => throw new InvalidOperationException()
+        };
         Check(receiver.Output == body && queue.State == SendState.KeysSent,
             "every ASCII speed preserves all printable characters, URL and CRLF in either layout");
         Check(queue.ProgressInfo.ActiveElapsed == TimeSpan.FromMilliseconds(300 + perCharacter * (body.Length - 2) + 350),
@@ -777,27 +790,35 @@ var inputRoot = Path.GetFullPath(Path.Combine(Directory.GetCurrentDirectory(), "
 var inputPath = Path.Combine(inputRoot, "input-preferences.json");
 var inputStore = new InputPreferencesStore(inputPath);
 Check(inputStore.Load() == new InputPreferences() && !Directory.Exists(inputRoot), "missing input preferences use the prior defaults");
+Directory.CreateDirectory(inputRoot);
+File.WriteAllText(inputPath, """{"Version":1,"Mode":"Ascii","JapaneseSpeed":"Faster","AsciiSpeed":"Relaxed","Layout":"EnglishUs"}""");
+Check(inputStore.Load() == new InputPreferences(Mode: TextInputMode.Ascii, JapaneseSpeed: JapaneseSpeed.Faster,
+    AsciiSpeed: AsciiSpeed.Relaxed, Layout: us), "a legacy file preserves its settings and defaults new XIAO presets to standard");
 var closedSettings = new InputSettings();
 closedSettings.SetSpeed(2);
+closedSettings.SetSpeed(2, useXiao: true);
 closedSettings.SetMode(TextInputMode.Ascii);
 closedSettings.SetSpeed(0);
+closedSettings.SetSpeed(0, useXiao: true);
 closedSettings.SetLayout(us);
 inputStore.Save(closedSettings.ToPreferences());
 var reopenedSettings = new InputSettings();
 reopenedSettings.Restore(new InputPreferencesStore(inputPath).Load());
-Check(reopenedSettings.Capture() == closedSettings.Capture() && reopenedSettings.Mode == TextInputMode.Ascii,
-    "input method, both speeds and receiver layout reopen exactly as they were closed");
+Check(reopenedSettings.Capture() == closedSettings.Capture() && reopenedSettings.Mode == TextInputMode.Ascii
+    && reopenedSettings.Capture(useXiao: true) == closedSettings.Capture(useXiao: true),
+    "both transports' speeds, input method and layout reopen exactly as they were closed");
 var inputJson = File.ReadAllText(inputPath);
 using (var json = System.Text.Json.JsonDocument.Parse(inputJson))
     Check(json.RootElement.EnumerateObject().Select(property => property.Name).Order()
-        .SequenceEqual(new[] { "AsciiSpeed", "JapaneseSpeed", "Layout", "Mode", "Version" }),
+        .SequenceEqual(new[] { "AsciiSpeed", "JapaneseSpeed", "Layout", "Mode", "Version", "XiaoAsciiPreset", "XiaoJapanesePreset" }),
         "input preference file holds only the schema and selector values, no text");
 Check(!Directory.EnumerateFiles(inputRoot, "*.tmp").Any(), "input preference save leaves no pending temporary file");
 var goodInputBytes = File.ReadAllBytes(inputPath);
 try { inputStore.Save(new InputPreferences(JapaneseSpeed: (JapaneseSpeed)99)); Check(false, "invalid input save must be rejected"); }
 catch (InvalidDataException) { Check(true, "invalid input preference save is rejected before filesystem mutation"); }
 Check(File.ReadAllBytes(inputPath).SequenceEqual(goodInputBytes), "rejected input save preserves the last valid file");
-foreach (var malformed in new[] { "null", "{", "{\"Version\":2}", "{\"Mode\":\"Kana\"}", "{\"AsciiSpeed\":9}", "{\"JapaneseSpeed\":\"Trial350\"}", new string(' ', 4097) })
+foreach (var malformed in new[] { "null", "{", "{\"Version\":2}", "{\"Mode\":\"Kana\"}", "{\"AsciiSpeed\":9}", "{\"AsciiSpeed\":\"XiaoFastest\"}",
+    "{\"JapaneseSpeed\":\"Trial10\"}", "{\"XiaoAsciiPreset\":9}", new string(' ', 4097) })
 {
     File.WriteAllText(inputPath, malformed);
     try { _ = inputStore.Load(); Check(false, "malformed input preferences must be rejected"); }

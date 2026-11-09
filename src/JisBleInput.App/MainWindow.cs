@@ -67,6 +67,8 @@ internal sealed class MainWindow : Window
     private readonly Button refresh = Button("接続先を更新");
     private readonly Button prepareIme = Button("受信側のIMEを準備");
     private readonly Button send = Button("送信");
+    private readonly Button clearDraft = Button("クリア");
+    private readonly Button pasteDraft = Button("ペースト");
     private readonly Button pause = Button("一時停止");
     private readonly Button resume = Button("続きから送信");
     private readonly Button stop = Button("停止");
@@ -187,14 +189,20 @@ internal sealed class MainWindow : Window
         counts.Children.Add(connectionStatus);
         bottom.Children.Add(counts);
         var buttons = new Grid { Margin = new Thickness(0, 6, 0, 0) };
-        buttons.ColumnDefinitions.Add(new ColumnDefinition());
+        buttons.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(3, GridUnitType.Star) });
         buttons.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         buttons.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        buttons.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        buttons.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         send.Name = "SendButton";
+        clearDraft.Name = "ClearDraftButton";
+        pasteDraft.Name = "PasteDraftButton";
         resume.Name = "ResumeButton";
         pause.Name = "PauseButton";
         stop.Name = "StopButton";
         send.ToolTip = "文章全体を送信（Ctrl+Enter）";
+        clearDraft.ToolTip = "本文欄の文字を消去";
+        pasteDraft.ToolTip = "クリップボードの文字を本文欄に貼り付け";
         resume.ToolTip = "続きから送信（Ctrl+Enter）";
         editor.ToolTip = "Enter：改行 / Ctrl+Enter：送信 / Tab：次の項目";
         var primaryStyle = new Style(typeof(Button));
@@ -206,13 +214,18 @@ internal sealed class MainWindow : Window
         send.Style = resume.Style = primaryStyle;
         send.Margin = resume.Margin = new Thickness(0);
         send.MinHeight = resume.MinHeight = 36;
-        pause.Margin = stop.Margin = new Thickness(8, 0, 0, 0);
+        pause.Margin = stop.Margin = clearDraft.Margin = pasteDraft.Margin = new Thickness(8, 0, 0, 0);
+        clearDraft.Padding = pasteDraft.Padding = new Thickness(4, 7, 4, 7);
         Grid.SetColumn(pause, 1);
         Grid.SetColumn(stop, 2);
+        Grid.SetColumn(clearDraft, 3);
+        Grid.SetColumn(pasteDraft, 4);
         buttons.Children.Add(send);
         buttons.Children.Add(pause);
         buttons.Children.Add(resume);
         buttons.Children.Add(stop);
+        buttons.Children.Add(clearDraft);
+        buttons.Children.Add(pasteDraft);
         bottom.Children.Add(buttons);
         progressBar.Height = 3;
         progressBar.Margin = new Thickness(0, 6, 0, 0);
@@ -358,6 +371,16 @@ internal sealed class MainWindow : Window
         refresh.Click += async (_, _) => await RefreshConnectionsAsync();
         prepareIme.Click += async (_, _) => await SendAsync(true);
         send.Click += async (_, _) => await SendAsync(false);
+        clearDraft.Click += (_, _) =>
+        {
+            editor.Clear();
+            editor.Focus();
+        };
+        pasteDraft.Click += (_, _) =>
+        {
+            editor.Focus();
+            ApplicationCommands.Paste.Execute(null, editor);
+        };
         pause.Click += (_, _) => { sender.RequestPause(); UpdateButtons(); };
         resume.Click += (_, _) =>
         {
@@ -689,23 +712,23 @@ internal sealed class MainWindow : Window
         }
     }
 
-    private SendOptions SelectedOptions() => inputSettings.Capture();
+    private SendOptions SelectedOptions() => inputSettings.Capture(!bluetooth.UsesLocalBluetooth);
 
     private void UpdateMode()
     {
-        var allowXiaoTrials = !bluetooth.UsesLocalBluetooth;
-        if (!allowXiaoTrials) inputSettings.ClearTrialSpeed();
+        var useXiao = !bluetooth.UsesLocalBluetooth;
         updatingSettings = true;
         try
         {
             inputMode.SelectedIndex = inputSettings.Mode == TextInputMode.Ascii ? 1 : 0;
-            inputSpeed.ItemsSource = InputSettings.SpeedLabels(inputSettings.Mode, allowXiaoTrials);
-            inputSpeed.SelectedIndex = inputSettings.SpeedIndex;
+            inputSpeed.ItemsSource = InputSettings.SpeedLabels(inputSettings.Mode, useXiao);
+            inputSpeed.SelectedIndex = inputSettings.GetSpeedIndex(useXiao);
             receiverLayout.SelectedIndex = inputSettings.Layout == ReceiverKeyboardLayout.EnglishUs ? 1 : 0;
         }
         finally { updatingSettings = false; }
-        modeHelp.Text = $"現在の設定: {inputSettings.Description}。通信の待ち時間は別途加わります。送信中・一時停止中は設定を固定します。";
-        inputSpeed.ToolTip = inputSettings.Description;
+        var description = inputSettings.Describe(useXiao);
+        modeHelp.Text = $"現在の設定: {description}。通信の待ち時間は別途加わります。送信中・一時停止中は設定を固定します。";
+        inputSpeed.ToolTip = description;
         UpdateButtons();
     }
 
@@ -780,6 +803,7 @@ internal sealed class MainWindow : Window
     {
         var paused = state == SendState.Paused;
         send.IsEnabled = !closing && targetReady && !isWorking && !composition;
+        clearDraft.IsEnabled = pasteDraft.IsEnabled = !closing && !isWorking && !composition;
         pause.IsEnabled = !closing && isWorking && state == SendState.Sending;
         resume.IsEnabled = !closing && targetReady && isWorking && paused;
         stop.IsEnabled = !closing && !isStarting && isWorking;
