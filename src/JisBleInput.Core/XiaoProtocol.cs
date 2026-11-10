@@ -3,7 +3,7 @@ using System.Buffers.Binary;
 namespace JisBleInput.Core;
 
 public enum XiaoCommand : byte { Hello = 1, Status = 2, Arm = 3, Report = 4, Release = 5, Disarm = 6, Ping = 7, PairingOpen = 8, ClearBond = 9 }
-public enum XiaoResult : byte { Success, InvalidFrame, WrongSession, WrongSequence, WrongGeneration, NotReady, NotArmed, Busy, NotificationFailed, Rejected }
+public enum XiaoResult : byte { Success, InvalidFrame, WrongSession, WrongSequence, WrongGeneration, NotReady, NotArmed, Busy, NotificationFailed, Rejected, StorageFailed }
 public sealed record XiaoFrame(byte Command, Guid Session, uint Sequence, uint Generation, byte[] Payload);
 
 public static class XiaoProtocol

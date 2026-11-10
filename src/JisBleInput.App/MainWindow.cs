@@ -17,6 +17,10 @@ internal sealed class MainWindow : Window
     private readonly InputSettings inputSettings = new();
     private readonly ConnectionPreferencesStore connectionStore;
     private readonly InputPreferencesStore inputStore;
+    private readonly TextPresetStore presetStore;
+    private TextPreset[] presets = [];
+    private bool presetsReadable = true;
+    private string? presetRecoveryNotice;
     private readonly TransportPreferencesStore transportStore;
     private TransportPreferences transportPreferences = new();
     private readonly bool useConnectionHooks;
@@ -26,6 +30,7 @@ internal sealed class MainWindow : Window
     private readonly Button clearXiaoBond = Button("基板の登録を解除");
     private bool updatingTransport;
     private bool preparingTransfer;
+    private bool stoppingByUser;
     private ConnectionPreferences connectionPreferences = new();
     private readonly CancellationTokenSource lifetime = new();
     private readonly TextBox editor = new()
@@ -73,6 +78,9 @@ internal sealed class MainWindow : Window
     private readonly Button resume = Button("続きから送信");
     private readonly Button stop = Button("停止");
     private readonly Button settings = Button("設定");
+    private readonly ComboBox presetChoice = new() { Name = "PresetChoice", MinWidth = 0, MinHeight = 30 };
+    private readonly Button loadPreset = Button("読み込む");
+    private readonly Button managePresets = Button("定型文を管理…");
     private readonly TextBlock connectionStatus = Named(Label("未接続"), "ConnectionStatus");
     private readonly TextBlock hostPlaceholder = new()
     {
@@ -138,6 +146,20 @@ internal sealed class MainWindow : Window
         {
             message.Text = "前回の入力方法・速度を読み込めませんでした。初期設定で開きます。";
         }
+        presetStore = new TextPresetStore(Path.Combine(preferencesRoot, "text-presets.json"));
+        try
+        {
+            var loaded = presetStore.Load();
+            presets = loaded.Presets;
+            presetRecoveryNotice = loaded.InvalidFile ? "定型文ファイルの形式を読み取れません。"
+                : loaded.Skipped > 0 ? $"読み込めない定型文が{loaded.Skipped}件あります。" : null;
+            if (presetRecoveryNotice is not null) message.Text = $"{presetRecoveryNotice} 設定の定型文管理で復旧できます。";
+        }
+        catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException or JsonException or ArgumentException)
+        {
+            presetsReadable = false;
+            message.Text = "定型文を読み込めませんでした。保存ファイルを確認してください。";
+        }
         Title = $"JIS BLE Input {typeof(MainWindow).Assembly.GetName().Version?.ToString(3)}";
         Icon = AppIcon.CreateWindowIcon();
         Width = 440;
@@ -147,36 +169,50 @@ internal sealed class MainWindow : Window
         FontFamily = new System.Windows.Media.FontFamily("Yu Gothic UI");
         FontSize = 13;
         var root = new Grid { Margin = new Thickness(12) };
+        root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(3, GridUnitType.Star) });
+        root.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        root.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        root.ColumnDefinitions.Add(new ColumnDefinition());
+        root.ColumnDefinitions.Add(new ColumnDefinition());
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        var top = new StackPanel();
-        var targetRow = new Grid();
-        targetRow.ColumnDefinitions.Add(new ColumnDefinition());
-        targetRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        void Place(UIElement child, int row, int column = 0, int span = 5)
+        {
+            Grid.SetRow(child, row);
+            Grid.SetColumn(child, column);
+            Grid.SetColumnSpan(child, span);
+            root.Children.Add(child);
+        }
         var hostBox = new Grid();
         hostBox.Children.Add(hosts);
         hostBox.Children.Add(hostPlaceholder);
-        targetRow.Children.Add(hostBox);
+        Place(hostBox, 0, 0, 4);
         settings.Name = "SettingsButton";
         settings.Margin = new Thickness(8, 0, 0, 0);
-        settings.ToolTip = "接続・IME準備・診断";
-        Grid.SetColumn(settings, 1);
-        targetRow.Children.Add(settings);
-        top.Children.Add(targetRow);
+        settings.ToolTip = "接続・IME準備・定型文・診断";
+        Place(settings, 0, 4, 1);
         var modeRow = new Grid { Margin = new Thickness(0, 8, 0, 0) };
         modeRow.ColumnDefinitions.Add(new ColumnDefinition());
         modeRow.ColumnDefinitions.Add(new ColumnDefinition());
         modeRow.Children.Add(inputMode);
         Grid.SetColumn(inputSpeed, 1);
         modeRow.Children.Add(inputSpeed);
-        top.Children.Add(modeRow);
-        root.Children.Add(top);
-        Grid.SetRow(editor, 1);
+        Place(modeRow, 1);
+        presetChoice.Margin = new Thickness(0, 8, 0, 0);
+        RefreshPresetChoices();
+        Place(presetChoice, 2, 0, 3);
+        loadPreset.Name = "LoadPresetButton";
+        loadPreset.Margin = new Thickness(8, 8, 0, 0);
+        loadPreset.ToolTip = "定型文と入力設定を本文欄に読み込む";
+        Place(loadPreset, 2, 3, 2);
         editor.Margin = new Thickness(0, 10, 0, 8);
-        root.Children.Add(editor);
+        Place(editor, 3);
         var bottom = new StackPanel();
-        Grid.SetRow(bottom, 2);
         var counts = new DockPanel();
         draftInfo.Name = "DraftInfo";
         draftInfo.FontSize = 11;
@@ -187,13 +223,7 @@ internal sealed class MainWindow : Window
         connectionStatus.Margin = new Thickness(0);
         connectionStatus.FontSize = 11;
         counts.Children.Add(connectionStatus);
-        bottom.Children.Add(counts);
-        var buttons = new Grid { Margin = new Thickness(0, 6, 0, 0) };
-        buttons.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(3, GridUnitType.Star) });
-        buttons.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        buttons.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        buttons.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        buttons.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        Place(counts, 4);
         send.Name = "SendButton";
         clearDraft.Name = "ClearDraftButton";
         pasteDraft.Name = "PasteDraftButton";
@@ -212,21 +242,16 @@ internal sealed class MainWindow : Window
         disabledPrimary.Setters.Add(new Setter(ForegroundProperty, Brushes.DimGray));
         primaryStyle.Triggers.Add(disabledPrimary);
         send.Style = resume.Style = primaryStyle;
-        send.Margin = resume.Margin = new Thickness(0);
+        send.Margin = resume.Margin = new Thickness(0, 6, 0, 0);
         send.MinHeight = resume.MinHeight = 36;
-        pause.Margin = stop.Margin = clearDraft.Margin = pasteDraft.Margin = new Thickness(8, 0, 0, 0);
-        clearDraft.Padding = pasteDraft.Padding = new Thickness(4, 7, 4, 7);
-        Grid.SetColumn(pause, 1);
-        Grid.SetColumn(stop, 2);
-        Grid.SetColumn(clearDraft, 3);
-        Grid.SetColumn(pasteDraft, 4);
-        buttons.Children.Add(send);
-        buttons.Children.Add(pause);
-        buttons.Children.Add(resume);
-        buttons.Children.Add(stop);
-        buttons.Children.Add(clearDraft);
-        buttons.Children.Add(pasteDraft);
-        bottom.Children.Add(buttons);
+        pause.Margin = stop.Margin = clearDraft.Margin = pasteDraft.Margin = new Thickness(8, 6, 0, 0);
+        settings.Padding = loadPreset.Padding = clearDraft.Padding = pasteDraft.Padding = new Thickness(4, 7, 4, 7);
+        Place(send, 5, 0, 1);
+        Place(pause, 5, 1, 1);
+        Place(resume, 5, 0, 1);
+        Place(stop, 5, 2, 1);
+        Place(clearDraft, 5, 3, 1);
+        Place(pasteDraft, 5, 4, 1);
         progressBar.Height = 3;
         progressBar.Margin = new Thickness(0, 6, 0, 0);
         bottom.Children.Add(progressBar);
@@ -239,13 +264,18 @@ internal sealed class MainWindow : Window
         message.MaxHeight = 44;
         message.TextTrimming = TextTrimming.CharacterEllipsis;
         bottom.Children.Add(message);
-        root.Children.Add(bottom);
+        Place(bottom, 6);
         Content = root;
         System.Windows.Automation.AutomationProperties.SetName(hosts, "送信先PC");
         System.Windows.Automation.AutomationProperties.SetName(inputMode, "入力方法");
         System.Windows.Automation.AutomationProperties.SetName(inputSpeed, "入力速度");
+        System.Windows.Automation.AutomationProperties.SetName(presetChoice, "定型文の選択");
         settingsContent = BuildSettingsContent();
         settings.Click += (_, _) => OpenSettings();
+        presetChoice.SelectionChanged += (_, _) => UpdateButtons();
+        loadPreset.Click += (_, _) => TryLoadPreset(() => MessageBox.Show(this,
+            "本文欄の文章を選んだ定型文に置き換えますか？", "定型文の読み込み",
+            MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) == MessageBoxResult.Yes);
         PreviewKeyDown += async (_, args) =>
         {
             if (args.Key == Key.Enter && Keyboard.Modifiers == ModifierKeys.Control)
@@ -388,7 +418,17 @@ internal sealed class MainWindow : Window
             catch (InvalidOperationException error) { message.Text = error.Message; }
             UpdateButtons();
         };
-        stop.Click += (_, _) => CancelTransfer();
+        stop.Click += (_, _) =>
+        {
+            if (bluetooth.UsesLocalBluetooth) CancelTransfer();
+            else
+            {
+                stoppingByUser = true;
+                sender.Cancel(finishCurrentWrite: true);
+                message.Text = "XIAOの応答を待って停止しています…";
+                UpdateButtons();
+            }
+        };
         tray = new TrayIcon(() => Dispatch(RestoreFromTray), () => Dispatch(RequestExit));
         Closing += OnClosing;
         Closed += (_, _) => { statusTimer.Stop(); tray.Dispose(); };
@@ -522,11 +562,57 @@ internal sealed class MainWindow : Window
         prepareIme.Margin = new Thickness(0, 10, 0, 0);
         panel.Children.Add(prepareIme);
         panel.Children.Add(caps);
+        managePresets.Name = "ManagePresetsButton";
+        managePresets.Margin = new Thickness(0, 12, 0, 0);
+        managePresets.HorizontalAlignment = HorizontalAlignment.Left;
+        if (!presetsReadable) managePresets.ToolTip = "保存ファイルの読み込みに失敗したため編集できません。";
+        managePresets.Click += (_, _) => OpenPresetManager();
+        panel.Children.Add(managePresets);
         var diagnostic = new StackPanel();
         diagnostic.Children.Add(startupDetails);
         diagnostic.Children.Add(modeHelp);
         panel.Children.Add(new Expander { Header = "診断・現在の設定", Content = diagnostic, Margin = new Thickness(0, 12, 0, 0) });
         return panel;
+    }
+
+    private void RefreshPresetChoices(string? selectedName = null)
+    {
+        presetChoice.ItemsSource = new[] { "定型文の選択…" }.Concat(presets.Select(preset => preset.Name)).ToArray();
+        presetChoice.SelectedIndex = Array.FindIndex(presets, preset => preset.Name == selectedName) + 1;
+    }
+
+    private void OpenPresetManager()
+    {
+        if (!managePresets.IsEnabled || settingsWindow is null) return;
+        var index = presetChoice.SelectedIndex - 1;
+        var name = index < 0 ? null : presets[index].Name;
+        var useXiao = !bluetooth.UsesLocalBluetooth;
+        var draft = new TextPreset("", editor.Text, inputSettings.Mode,
+            useXiao ? null : inputSettings.GetSpeedIndex(),
+            useXiao ? inputSettings.GetSpeedIndex(useXiao: true) : null);
+        var manager = new TextPresetsWindow(settingsWindow, presetStore, presets, draft, index, presetRecoveryNotice);
+        manager.ShowDialog();
+        presets = manager.Presets;
+        presetRecoveryNotice = manager.RecoveryNotice;
+        RefreshPresetChoices(name);
+    }
+
+    internal bool TryLoadPreset(Func<bool> confirmReplace)
+    {
+        if (!loadPreset.IsEnabled || working || closing || composition || presetChoice.SelectedIndex <= 0) return false;
+        var preset = presets[presetChoice.SelectedIndex - 1];
+        if (editor.Text.Length > 0 && editor.Text != preset.Text && !confirmReplace()) return false;
+        if (working || closing || composition) return false;
+        var useXiao = !bluetooth.UsesLocalBluetooth;
+        inputSettings.SetMode(preset.Mode);
+        if ((useXiao ? preset.XiaoSpeed : preset.BluetoothSpeed) is int speed)
+            inputSettings.SetSpeed(speed, useXiao);
+        editor.Text = preset.Text;
+        SaveInputPreferences();
+        UpdateMode();
+        editor.Focus();
+        editor.CaretIndex = editor.Text.Length;
+        return true;
     }
 
     internal void OpenSettings()
@@ -620,7 +706,7 @@ internal sealed class MainWindow : Window
             {
                 connection.Text = "接続待ちを開始できませんでした。「再接続」を押せます。";
                 startupDetails.Text = $"接続診断: {error.Message}";
-                message.Text = "接続できませんでした。設定から再接続してください。";
+                message.Text = $"接続を開始できませんでした。{error.Message}";
             }
         }
         finally
@@ -655,6 +741,7 @@ internal sealed class MainWindow : Window
         transferCancellation = cancellation;
         working = true;
         preparingTransfer = true;
+        stoppingByUser = false;
         var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         operation = completed.Task;
         UpdateButtons();
@@ -669,6 +756,11 @@ internal sealed class MainWindow : Window
                 await bluetooth.BeginSendAsync(destination, cancellation.Token);
             }
             cancellation.Token.ThrowIfCancellationRequested();
+            if (stoppingByUser)
+            {
+                message.Text = "送信開始前に停止しました。";
+                return;
+            }
             preparingTransfer = false;
             transfer = prepareOnly ? sender.PrepareImeAsync(destination, options, cancellation.Token)
                 : sender.SendSnapshotAsync(snapshot!, destination, options, cancellation.Token);
@@ -682,9 +774,23 @@ internal sealed class MainWindow : Window
                 _ => "途中停止しました。一部入力・意図しない確定の可能性があります。受信側を確認してください。自動削除・再送はしません。"
             };
         }
-        catch (OperationCanceledException) { message.Text = "途中停止しました。受信側を確認してください。自動再送はしません。"; }
+        catch (XiaoRequestTimeoutException error)
+        {
+            message.Text = transfer is null ? $"送信準備に失敗しました。{error.Message} 接続を確認してください。"
+                : $"{error.Message} 送信を停止しました。一部入力の可能性があります。接続と受信側を確認してください。";
+        }
+        catch (OperationCanceledException)
+        {
+            message.Text = transfer is not null
+                ? "途中停止しました。受信側を確認してください。自動再送はしません。"
+                : cancellation.IsCancellationRequested ? "送信開始前に停止しました。" : "送信準備が中断されました。接続を確認してください。";
+        }
         catch (ArgumentException error) { message.Text = error.Message; }
-        catch (Exception error) { message.Text = $"送信を停止しました: {error.Message} 一部入力の可能性があります。受信側を確認してください。"; }
+        catch (Exception error)
+        {
+            message.Text = transfer is null ? $"送信を開始できませんでした。{error.Message}"
+                : $"送信を停止しました。{error.Message} 一部入力の可能性があります。受信側を確認してください。";
+        }
         finally
         {
             if (attemptedBegin)
@@ -704,6 +810,7 @@ internal sealed class MainWindow : Window
             }
             working = false;
             preparingTransfer = false;
+            stoppingByUser = false;
             transferCancellation = null;
             operation = null;
             activeTarget = null;
@@ -727,7 +834,9 @@ internal sealed class MainWindow : Window
         }
         finally { updatingSettings = false; }
         var description = inputSettings.Describe(useXiao);
-        modeHelp.Text = $"現在の設定: {description}。通信の待ち時間は別途加わります。送信中・一時停止中は設定を固定します。";
+        modeHelp.Text = useXiao
+            ? $"現在の設定: {description}。速度は模擬通信での目安です。USB・BLEの待ち時間は別途加わります。"
+            : $"現在の設定: {description}。通信の待ち時間は別途加わります。";
         inputSpeed.ToolTip = description;
         UpdateButtons();
     }
@@ -804,9 +913,12 @@ internal sealed class MainWindow : Window
         var paused = state == SendState.Paused;
         send.IsEnabled = !closing && targetReady && !isWorking && !composition;
         clearDraft.IsEnabled = pasteDraft.IsEnabled = !closing && !isWorking && !composition;
+        managePresets.IsEnabled = presetsReadable && !closing && !isWorking && !composition;
+        presetChoice.IsEnabled = !closing && !isWorking && !composition && presets.Length > 0;
+        loadPreset.IsEnabled = presetChoice.IsEnabled && presetChoice.SelectedIndex > 0;
         pause.IsEnabled = !closing && isWorking && state == SendState.Sending;
         resume.IsEnabled = !closing && targetReady && isWorking && paused;
-        stop.IsEnabled = !closing && !isStarting && isWorking;
+        stop.IsEnabled = !closing && !isStarting && isWorking && !stoppingByUser;
         send.Visibility = paused ? Visibility.Collapsed : Visibility.Visible;
         send.Content = isWorking ? "送信中" : "送信";
         resume.Visibility = paused ? Visibility.Visible : Visibility.Collapsed;
@@ -884,6 +996,28 @@ internal sealed class MainWindow : Window
     }
 
     internal void DisposeTrayIcon() => tray.Dispose();
+
+    internal async Task StopAfterUnexpectedErrorAsync()
+    {
+        closing = true;
+        stoppingByUser = true;
+        try
+        {
+            if (bluetooth.UsesLocalBluetooth) CancelTransfer();
+            else sender.Cancel(finishCurrentWrite: true);
+            if (operation is { } pending) await pending.WaitAsync(TimeSpan.FromSeconds(3));
+        }
+        finally
+        {
+            allowClose = true;
+            try { lifetime.Cancel(); }
+            finally
+            {
+                try { bluetooth.Dispose(); }
+                finally { tray.Dispose(); }
+            }
+        }
+    }
 
     private async void OnClosing(object? source, CancelEventArgs args)
     {

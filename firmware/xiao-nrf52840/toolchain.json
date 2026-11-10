@@ -1,7 +1,6 @@
 {
-    "firmware": "0.1.0",
+    "firmware": "0.1.1",
     "protocol": 1,
-    "app": "1.12.0",
     "fqbn": "Seeeduino:nrf52:xiaonRF52840Sense:softdevice=s140v6,debug=l0",
     "core": {
         "version": "1.1.13",
@@ -35,8 +34,5 @@
         "converterSha256": "c3e86d44992cf0956cd07a73dca52bdd81f7cf149adde0642c15bafed05a6202"
     },
     "productionDependency": "Microsoft System.IO.Ports 10.0.14, MIT, api.nuget.org; owner approved",
-    "authentication": "No HMAC; owner accepts local process trust",
-    "hardwareTested": false,
-    "lineCoverage": "NOT_MEASURED",
-    "cppFormatting": "No workspace adapter; host warnings as errors, whitespace manually maintained"
+    "authentication": "No HMAC; owner accepts local process trust"
 }

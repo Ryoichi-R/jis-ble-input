@@ -1,6 +1,6 @@
-# XIAO USB protocol 1 / firmware 0.1.0
+# XIAO USB protocol 1 / firmware 0.1.0・0.1.1
 
-2026-11-02 JST（2026-11-05に対象基板をSense版へ変更）。対象はXIAO nRF52840 Sense、アプリ1.7.0。HMACは利用者の選択により採用しない。USBを開ける送信PCのプロセスを信頼する。CRC・session・USBシリアル番号は送信元認証ではない。
+対象はXIAO nRF52840 Senseとアプリ1.13.2。HMACは利用者の選択により採用しない。USBを開ける送信PCのプロセスを信頼する。CRC・session・USBシリアル番号は送信元認証ではない。
 
 ## 接続とフレーム
 
@@ -38,8 +38,10 @@ rawフレームをCOBS化し、0x00で終端する。raw上限128バイト、pay
 HELLOの後はsequence1から全要求（PINGを含む）を単一writerで採番する。重複・逆順・飛びを拒否する。FFFFFFFF到達前に新sessionが必要。ACKは要求command OR 80、同じsession/sequence、現行generation、payload先頭にresultを返す。成功時は後続57バイトの状態を必須にする。失敗時はresult1バイト。未要求の状態イベントはcommand F0、sequence0、payloadに57バイト状態を返す。
 
 result: 0成功、1不正形式、2session不一致、3sequence不一致、4世代不一致、5NotReady、6NotArmed、7Busy、8通知失敗、9拒否。成功ACKはSoftDeviceの通知投入成功を示す。無線到達、相手のキー状態、文字・IME変換・本文一致の確認ではない。
+FW 0.1.1のCLEAR_BONDでは、登録ファイルを削除できなければ結果10（StorageFailed）を返す。登録状態を残して手動の再試行を可能にする。
 
 アプリ要求timeoutは1秒、BLE通知の空き待ちは500ms。USB/DTR断または正当な通信の途絶1,500msでARMを失効し解放する。DISARM/中断RELEASEで以前の非ゼロjobを破棄し、ゼロ投入成功後に停止完了ACKを返す。待機中もPINGを処理する。純粋状態機械は単一Arduino loopが所有し、BLEコールバックはハードウェア状態を渡す。BLE通知は非ブロッキングの`sd_ble_gatts_hvx`をこのloopだけから呼ぶ。
+アプリの「停止」は新しい入力要求を止め、進行中の要求には通常の応答期限を適用する。応答を受けてからRELEASE・DISARMへ進み、応答途絶時はUSBを閉じる。
 
 ## 57バイト状態
 

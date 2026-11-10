@@ -76,7 +76,8 @@ function Test-PublishLayout {
     $exe = Join-Path $PublishPath 'JisBleInput.exe'
     if ([Diagnostics.FileVersionInfo]::GetVersionInfo($exe).ProductVersion -ne $Version) { throw 'PUBLISH_VERSION_MISMATCH' }
     $compatibility = Get-Content -LiteralPath (Join-Path $PublishPath 'firmware/compatibility.json') -Raw | ConvertFrom-Json
-    if ($compatibility.AppVersion -ne $Version -or $compatibility.Firmware -ne '0.1.0' -or $compatibility.Protocol -ne 1) { throw 'PUBLISH_FIRMWARE_VERSION_MISMATCH' }
+    $toolchain = Get-Content -LiteralPath (Join-Path $PublishPath 'firmware/toolchain.json') -Raw | ConvertFrom-Json
+    if ($compatibility.AppVersion -ne $Version -or $compatibility.Firmware -ne $toolchain.firmware -or $compatibility.Protocol -ne 1 -or $toolchain.protocol -ne 1) { throw 'PUBLISH_FIRMWARE_VERSION_MISMATCH' }
     foreach ($name in @('xiao-nrf52840.ino.uf2', 'xiao-nrf52840.ino.hex', 'xiao-nrf52840.ino.zip')) {
         $entry = @($compatibility.Images | Where-Object Name -EQ $name)
         if ($entry.Count -ne 1 -or (Get-FileHash -LiteralPath (Join-Path $PublishPath "firmware/$name")).Hash -ne $entry[0].Sha256) { throw 'PUBLISH_FIRMWARE_HASH_MISMATCH' }

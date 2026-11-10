@@ -22,7 +22,9 @@ $results = foreach ($file in $files) {
         & $clangFormat --style=file -i $file.FullName
         if ($LASTEXITCODE -ne 0) { throw "CLANG_FORMAT_FAILED: $relative" }
     }
-    $diagnostics = @(& $clangFormat --style=file --dry-run $file.FullName 2>&1 | Where-Object { "$_" -match 'warning: code should be clang-formatted' })
+    $output = @(& $clangFormat --style=file --dry-run $file.FullName 2>&1)
+    if ($LASTEXITCODE -ne 0) { throw "CLANG_FORMAT_CHECK_FAILED: $relative" }
+    $diagnostics = @($output | Where-Object { "$_" -match 'warning: code should be clang-formatted' })
     [pscustomobject]@{ File = $relative; Replacements = $diagnostics.Count }
 }
 $nonConforming = @($results | Where-Object Replacements -GT 0)

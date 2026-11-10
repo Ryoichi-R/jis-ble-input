@@ -80,7 +80,22 @@ internal static class XiaoChecks
         {
             await client.StartAsync(CancellationToken.None);
             try { await client.RequestAsync(XiaoCommand.Arm, [], client.Generation, CancellationToken.None); check(false, "ARM timeout"); }
-            catch (OperationCanceledException) { check(channel.Disposed && channel.Commands.Count(command => command == XiaoCommand.Arm) == 1, "lost ACK closes actual channel and never retries"); }
+            catch (XiaoRequestTimeoutException error)
+            {
+                check(error.Message.Contains("応答が途絶") && channel.Disposed && channel.Commands.Count(command => command == XiaoCommand.Arm) == 1,
+                    "lost ACK surfaces a communication timeout, closes the channel and never retries");
+            }
+        }
+        using (var channel = new FakeChannel { DropArm = true })
+        using (var client = new XiaoClient(channel))
+        using (var caller = new CancellationTokenSource())
+        {
+            await client.StartAsync(CancellationToken.None);
+            var request = client.RequestAsync(XiaoCommand.Arm, [], client.Generation, caller.Token);
+            await channel.ArmWritten.Task.WaitAsync(TimeSpan.FromSeconds(1));
+            caller.Cancel();
+            try { await request; check(false, "cancel outstanding ARM"); }
+            catch (OperationCanceledException) { check(channel.Disposed, "caller cancellation retains the cancellation result and closes an outstanding request"); }
         }
         using (var channel = new FakeChannel { WrongSession = true })
         using (var client = new XiaoClient(channel))
@@ -138,6 +153,7 @@ internal static class XiaoChecks
         public readonly List<XiaoCommand> Commands = [];
         public readonly List<uint> Sequences = [];
         public bool DropArm { get; init; }
+        public TaskCompletionSource ArmWritten { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public bool WrongSession { get; init; }
         public Func<XiaoCommand, byte[], byte[]>? TransformResponse { get; init; }
         public bool Disposed { get; private set; }
@@ -151,7 +167,11 @@ internal static class XiaoChecks
             cancellation.ThrowIfCancellationRequested();
             var request = XiaoProtocol.Decode(buffer.AsSpan(0, buffer.Length - 1));
             Commands.Add((XiaoCommand)request.Command); Sequences.Add(request.Sequence);
-            if (DropArm && request.Command == (byte)XiaoCommand.Arm) return Task.CompletedTask;
+            if (DropArm && request.Command == (byte)XiaoCommand.Arm)
+            {
+                ArmWritten.TrySetResult();
+                return Task.CompletedTask;
+            }
             var state = new byte[XiaoStatus.Length + 1];
             "JBI1"u8.CopyTo(state.AsSpan(1)); state[5] = 7 | 16 | 64; state[6] = 1;
             state[56] = 1;

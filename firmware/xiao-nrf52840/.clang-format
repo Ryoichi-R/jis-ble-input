@@ -1,7 +1,4 @@
 # XIAO firmware C++ style (clang-format 23.1.2, host tooling only).
-# Chosen to stay close to the existing 4-space style. The current source is not yet reformatted:
-# Test-FirmwareFormat.ps1 reports the gap and -Fix is applied together with the next firmware change,
-# because reformatting changes the firmware source hash bound to the flashed preview.6 candidate.
 BasedOnStyle: LLVM
 IndentWidth: 4
 ColumnLimit: 0

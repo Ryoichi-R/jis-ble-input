@@ -64,11 +64,10 @@ $linePercent = [math]::Round(100.0 * $coveredLines / $totalLines, 2)
 $coverageFiles | ForEach-Object { '{0}: {1}/{2} lines' -f $_.File, $_.Covered, $_.Lines }
 "Line coverage (src/*.h): $coveredLines/$totalLines = $linePercent%"
 if ($linePercent -lt 90) { throw "FIRMWARE_LINE_COVERAGE_BELOW_90: $linePercent" }
-# Formatting is reported, not enforced, until the source is reformatted with the next firmware change.
-$formatSummary = (& (Join-Path $PSScriptRoot 'Test-FirmwareFormat.ps1') | Select-Object -Last 1)
+$formatSummary = (& (Join-Path $PSScriptRoot 'Test-FirmwareFormat.ps1') -Enforce | Select-Object -Last 1)
 $formatSummary
 if ("$formatSummary" -notmatch '^C\+\+ format: (Passed|NOT_CONFORMING) \((\d+)/(\d+) files') { throw 'FIRMWARE_FORMAT_CHECK_FAILED' }
-$cppFormat = [pscustomobject]@{ Status = $Matches[1]; FilesNeedingFormat = [int]$Matches[2]; Files = [int]$Matches[3]; Enforced = $false; Tool = 'clang-format 23.1.2, firmware/xiao-nrf52840/.clang-format' }
+$cppFormat = [pscustomobject]@{ Status = $Matches[1]; FilesNeedingFormat = [int]$Matches[2]; Files = [int]$Matches[3]; Enforced = $true; Tool = 'clang-format 23.1.2, firmware/xiao-nrf52840/.clang-format' }
 [pscustomobject]@{
     Status = 'Passed'; Checks = $checks; ImageSafetyTests = 10; HardwareTested = $false; CppFormat = $cppFormat
     LineCoverage = [pscustomobject]@{ Percent = $linePercent; Covered = $coveredLines; Total = $totalLines; Threshold = 90; Scope = 'firmware/xiao-nrf52840/src/*.h (host-testable logic; .ino SDK boundary excluded)'; Tool = 'LLVM 23.1.2 clang/llvm-cov, C++14 instrumented build'; Files = $coverageFiles }

@@ -23,6 +23,47 @@ Task NoDelay(int _, CancellationToken token)
     return Task.CompletedTask;
 }
 
+var presetPath = Path.Combine(Directory.GetCurrentDirectory(), "_internal", "build-cache", "test-data",
+    "presets", Guid.NewGuid().ToString("N"), "text-presets.json");
+var presetStore = new TextPresetStore(presetPath);
+Check(presetStore.Load().Presets.Length == 0, "missing preset file starts empty");
+var urlPreset = new TextPreset("URL", "https://example.com/", TextInputMode.Ascii, null, 1);
+var messagePreset = new TextPreset("受付", "受付しました。\r\n", TextInputMode.Japanese, 0, 2);
+presetStore.Save([urlPreset, messagePreset]);
+Check(new TextPresetStore(presetPath).Load().Presets.SequenceEqual([urlPreset, messagePreset]),
+    "presets retain exact text, mode and independent optional transport speeds across reload");
+foreach (var invalid in new[]
+{
+    urlPreset with { Text = "Ａ" },
+    urlPreset with { BluetoothSpeed = 3 },
+    urlPreset with { XiaoSpeed = -1 },
+    messagePreset with { Text = new string('A', 2001) },
+    messagePreset with { Name = "url" }
+})
+{
+    await RejectAsync(() => { presetStore.Save([urlPreset, invalid]); return Task.CompletedTask; },
+        "invalid preset cannot replace the existing file");
+    Check(presetStore.Load().Presets.SequenceEqual([urlPreset, messagePreset]), "failed save preserves the previous presets");
+}
+presetStore.Save([]);
+Check(presetStore.Load().Presets.Length == 0, "removing the last preset persists an empty collection");
+const string legacyPresets = """
+    {"Version":1,"Presets":[{"Name":"URL","Text":"https://example.com/","Mode":"Ascii","BluetoothSpeed":null,"XiaoSpeed":1},
+    {"Name":"Invalid","Text":"test","Mode":"Ascii","XiaoSpeed":9},null,{"Name":"No mode","Text":"text"}]}
+    """;
+File.WriteAllText(presetPath, legacyPresets);
+var recovered = presetStore.Load();
+Check(recovered.Presets.SequenceEqual([urlPreset]) && recovered.Skipped == 3 && recovered.NeedsBackup,
+    "legacy speeds migrate and malformed entries do not hide valid presets");
+var backupPath = presetStore.Save(recovered.Presets, backupOriginal: true);
+Check(backupPath is not null && File.ReadAllText(backupPath) == legacyPresets && File.ReadAllText(presetPath).Contains("\"standard\"")
+    && !presetStore.Load().NeedsBackup, "recovery retains the original and writes stable speed identifiers");
+File.WriteAllText(presetPath, "{");
+Check(presetStore.Load() is { InvalidFile: true, NeedsBackup: true }, "broken JSON can be backed up for a fresh collection");
+backupPath = presetStore.Save([urlPreset], backupOriginal: true);
+Check(backupPath is not null && File.ReadAllText(backupPath) == "{" && presetStore.Load().Presets.SequenceEqual([urlPreset]),
+    "a fresh collection preserves the unreadable original separately");
+
 var preparation = ImeKeyEncoder.EncodePreparation();
 Check(preparation.Count == 4 && preparation[0].Stroke == new KeyStroke(0, 0x90)
     && preparation[2].Stroke == new KeyStroke(1, 0x39), "IME setup uses LANG1 then Ctrl+CapsLock, without a toggle");
@@ -125,6 +166,26 @@ await RejectAsync(() => pendingSender.PrepareImeAsync(destination), "IME prepara
 continueWrite.SetResult();
 await pending;
 Check(Decode(pendingTransport.Frames) == "A橋B", "editing the source draft does not change the in-flight snapshot");
+
+var gracefulTransport = new FakeTransport(destination);
+var gracefulSender = new StagedSender(gracefulTransport, NoDelay);
+var writeStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+var ack = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+gracefulTransport.BeforeWrite = async (report, token) =>
+{
+    if (report.All(value => value == 0)) return;
+    writeStarted.TrySetResult();
+    await ack.Task.WaitAsync(token);
+};
+var gracefulSend = gracefulSender.SendAsync("橋", destination);
+await writeStarted.Task;
+gracefulSender.Cancel(finishCurrentWrite: true);
+Check(!gracefulSend.IsCompleted && gracefulTransport.Frames.Count == 0, "graceful stop waits for an outstanding write");
+ack.SetResult();
+await gracefulSend;
+Check(gracefulSender.State == SendState.StoppedPartial && gracefulSender.ReleaseReportSent == true
+    && gracefulTransport.Frames.Count == 2 && gracefulTransport.Frames[^1].All(value => value == 0),
+    "after the outstanding write, graceful stop emits only a release");
 
 foreach (var stageEnd in new[] { 1, 4, 12, 14, 16 })
 {

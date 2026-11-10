@@ -4,7 +4,8 @@ param(
     [switch]$NoRestore,
     [string]$RestoreSource,
     [string]$PackagesPath,
-    [string]$FallbackPackagesPath,
+    [string[]]$FallbackPackagesPath,
+    [string]$FirmwareCachePath,
     [ValidatePattern('^[a-z0-9][a-z0-9.-]{0,40}$')][string]$PackageSuffix
 )
 
@@ -24,18 +25,29 @@ $project = Join-Path $projectRoot 'src/JisBleInput.App/JisBleInput.App.csproj'
 $version = [string]$definition.Project.PropertyGroup.Version
 $runtimeVersion = [string]$definition.Project.PropertyGroup.BundledRuntimeVersion
 $publish = Assert-WorkspacePath (Join-Path $projectRoot '_internal/build-cache/bin/JisBleInput.App/Release/net10.0-windows10.0.19041.0/win-arm64/publish')
-if (-not $PackagesPath) { $PackagesPath = Join-Path $projectRoot '_internal/build-cache/nuget-packages' }
-if (-not $FallbackPackagesPath) {
-    $standardCache = Join-Path ([Environment]::GetFolderPath('UserProfile')) '.nuget/packages'
-    if (Test-Path -LiteralPath $standardCache) { $FallbackPackagesPath = $standardCache }
+if (-not $FirmwareCachePath) { $FirmwareCachePath = Join-Path $projectRoot '_internal/build-cache/firmware' }
+$FirmwareCachePath = [IO.Path]::GetFullPath($FirmwareCachePath)
+if (-not (Test-Path -LiteralPath (Join-Path $FirmwareCachePath 'build/receipt.json') -PathType Leaf)) {
+    throw "FIRMWARE_BUILD_MISSING: $FirmwareCachePath. Run Prepare-FirmwareTools.ps1 and Build-Firmware.ps1, or specify a verified build cache with -FirmwareCachePath."
 }
-$restore = @('restore', $project, '-r', 'win-arm64', '-p:SelfContained=true', '--locked-mode', '--configfile', (Join-Path $projectRoot 'NuGet.Config'))
+if (-not $PackagesPath) { $PackagesPath = Join-Path $projectRoot '_internal/build-cache/nuget-packages' }
+$restore = @('restore', $project, '-p:SelfContained=true', '--locked-mode', '--configfile', (Join-Path $projectRoot 'NuGet.Config'))
 if ($RestoreSource) { $restore += @('--source', $RestoreSource) }
 if ($PackagesPath) { $restore += @('--packages', (Assert-WorkspacePath $PackagesPath)) }
-if ($FallbackPackagesPath) { $restore += "-p:RestoreFallbackFolders=$([IO.Path]::GetFullPath($FallbackPackagesPath))" }
 if (-not $NoRestore) {
-    & dotnet @restore
-    if ($LASTEXITCODE -ne 0) { throw 'RESTORE_FAILED' }
+    $previousFallback = $env:RestoreFallbackFolders
+    try {
+        if ($FallbackPackagesPath) {
+            $env:RestoreFallbackFolders = ($FallbackPackagesPath | ForEach-Object { [IO.Path]::GetFullPath($_) }) -join ';'
+        } elseif (-not $previousFallback) {
+            $standardCache = Join-Path ([Environment]::GetFolderPath('UserProfile')) '.nuget/packages'
+            if (Test-Path -LiteralPath $standardCache) { $env:RestoreFallbackFolders = $standardCache }
+        }
+        & dotnet @restore
+        if ($LASTEXITCODE -ne 0) {
+            throw 'RESTORE_FAILED: Use -RestoreSource online, or provide caches containing the packs reported above. Locked restore requires both win-arm64 and win-x64 packs.'
+        }
+    } finally { $env:RestoreFallbackFolders = $previousFallback }
 }
 # Preserve the previous executable before replacing the publish candidate.
 $oldExe = Join-Path $publish 'JisBleInput.exe'
@@ -83,7 +95,7 @@ Copy-Item -LiteralPath (Join-Path $portsPackage 'THIRD-PARTY-NOTICES.TXT') -Dest
 @{ Package = 'System.IO.Ports'; Version = $runtimeVersion; License = 'MIT'; LicenseSource = 'Microsoft .NET runtime MIT text, same runtime version; package declares MIT'; Copyright = [string]$portsMetadata.package.metadata.copyright; Repository = [string]$portsMetadata.package.metadata.repository.url; Commit = [string]$portsMetadata.package.metadata.repository.commit; WindowsAssemblySha256 = (Get-FileHash -LiteralPath (Join-Path $portsPackage 'runtimes/win/lib/net10.0/System.IO.Ports.dll')).Hash } |
     ConvertTo-Json | Set-Content -LiteralPath (Join-Path $portsLicenses 'source.json') -Encoding utf8NoBOM
 & (Join-Path $PSScriptRoot 'Test-XiaoContract.ps1')
-& (Join-Path $PSScriptRoot 'Copy-FirmwarePackage.ps1') -PublishPath $publish -AppVersion $version
+& (Join-Path $PSScriptRoot 'Copy-FirmwarePackage.ps1') -PublishPath $publish -AppVersion $version -FirmwareCachePath $FirmwareCachePath
 & (Join-Path $PSScriptRoot 'Write-ReleaseSbom.ps1') -PublishPath $publish
 Import-Module (Join-Path $PSScriptRoot 'PublishLayout.psm1') -Force
 $validation = Test-PublishLayout -PublishPath $publish -Version $version -RuntimeVersion $runtimeVersion

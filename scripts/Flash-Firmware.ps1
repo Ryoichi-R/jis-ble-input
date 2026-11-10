@@ -15,7 +15,7 @@ if (-not $BuildPath) { $BuildPath = Join-Path $cache 'build' }
 $BuildPath = [IO.Path]::GetFullPath($BuildPath)
 if (-not $BuildPath.StartsWith($workspaceRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) { throw 'Build must be inside workspace.' }
 $receipt = Get-Content -LiteralPath (Join-Path $BuildPath 'receipt.json') -Raw | ConvertFrom-Json
-if ($receipt.Status -ne 'Compiled' -or $receipt.Protocol -ne 1 -or $receipt.Firmware -ne '0.1.0' -or $receipt.Core -ne 'Seeeduino:nrf52@1.1.13') { throw 'UNSUPPORTED_FIRMWARE_RECEIPT' }
+if ($receipt.Status -ne 'Compiled' -or $receipt.Protocol -ne 1 -or $receipt.Firmware -notin '0.1.0', '0.1.1' -or $receipt.Core -ne 'Seeeduino:nrf52@1.1.13') { throw 'UNSUPPORTED_FIRMWARE_RECEIPT' }
 foreach ($name in @('xiao-nrf52840.ino.zip', 'xiao-nrf52840.ino.hex', 'xiao-nrf52840.ino.uf2')) {
     $entry = @($receipt.Files | Where-Object Name -EQ $name)
     if ($entry.Count -ne 1 -or (Get-FileHash -LiteralPath (Join-Path $BuildPath $name)).Hash -ne $entry[0].Sha256) { throw "FIRMWARE_HASH_MISMATCH: $name" }
@@ -34,12 +34,12 @@ for ($level = 0; $level -lt 5; $level++) {
 if ($serial -ne $BoardSerial) { throw 'BOARD_ID_MISMATCH: refusing to upload.' }
 $boardHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($serial.ToUpperInvariant())))
 $package = Join-Path $BuildPath 'xiao-nrf52840.ino.zip'
-Write-Output "Verified application-only firmware 0.1.0, board [$($boardHash.Substring(0, 8))], $Port."
+Write-Output "Verified application-only firmware $($receipt.Firmware), board [$($boardHash.Substring(0, 8))], $Port."
 if (-not $Apply) { Write-Output 'DRY_RUN: no device opened. Use -Apply only after retaining the previous known-good application and reading the recovery procedure.'; return }
 $uploader = Join-Path $cache 'arduino-data/packages/Seeeduino/hardware/nrf52/1.1.13/tools/adafruit-nrfutil/win32/adafruit-nrfutil.exe'
 if (-not (Test-Path -LiteralPath $uploader)) { throw 'UPLOADER_MISSING' }
 if ($PSCmdlet.ShouldProcess("XIAO [$($boardHash.Substring(0, 8))] on $Port", 'Replace application only using USB DFU')) {
     & $uploader dfu serial -pkg $package -p $Port -b 115200 --singlebank
     if ($LASTEXITCODE -ne 0) { throw 'UPLOAD_UNCONFIRMED: double-reset and retry the retained image; do not erase flash or update bootloader/SoftDevice.' }
-    Write-Output 'DFU completed. Reconnect at normal speed and verify HELLO firmware 0.1.0 in the app. Bluetooth/display/input acceptance is still separate.'
+    Write-Output "DFU completed. Reconnect and verify HELLO firmware $($receipt.Firmware) in the app. Bluetooth/display/input acceptance is separate."
 }

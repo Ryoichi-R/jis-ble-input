@@ -10,12 +10,18 @@ Describe 'ARM64 publish package validation' -Tag 'PackageIntegration' {
         [xml]$definition = Get-Content (Join-Path $projectRoot 'src/JisBleInput.App/JisBleInput.App.csproj') -Raw
         $version = [string]$definition.Project.PropertyGroup.Version
         $runtime = [string]$definition.Project.PropertyGroup.BundledRuntimeVersion
+        $firmware = (Get-Content -LiteralPath (Join-Path $projectRoot 'firmware/xiao-nrf52840/toolchain.json') -Raw | ConvertFrom-Json).firmware
     }
 
     It 'checks the actual EXE architecture, embedded runtimes and required distribution files' {
         $result = Test-PublishLayout -PublishPath $publish -Version $version -RuntimeVersion $runtime
         $result.RuntimeVersion | Should -Be $runtime
         $result.Sha256 | Should -Match '^[A-F0-9]{64}$'
+    }
+
+    It 'reports a missing firmware receipt before restore or publish' {
+        $absent = Join-Path $workspaceRoot ([guid]::NewGuid().ToString('N'))
+        { & (Join-Path $projectRoot 'scripts/Publish.ps1') -FirmwareCachePath $absent } | Should -Throw '*FIRMWARE_BUILD_MISSING*'
     }
 
     It 'rejects an executable with the wrong product version' {
@@ -38,7 +44,7 @@ Describe 'ARM64 publish package validation' -Tag 'PackageIntegration' {
     }
 
     It 'rejects firmware whose image does not match the recorded hash' {
-        $invalidImages = @{ AppVersion = $version; Firmware = '0.1.0'; Protocol = 1; Images = @(@{ Name = 'xiao-nrf52840.ino.uf2'; Sha256 = 'bad' }) } | ConvertTo-Json -Depth 4
+        $invalidImages = @{ AppVersion = $version; Firmware = $firmware; Protocol = 1; Images = @(@{ Name = 'xiao-nrf52840.ino.uf2'; Sha256 = 'bad' }) } | ConvertTo-Json -Depth 4
         Mock Get-Content -ModuleName PublishLayout -ParameterFilter { $LiteralPath -like '*compatibility.json' } { $invalidImages }
         { Test-PublishLayout -PublishPath $publish -Version $version -RuntimeVersion $runtime } | Should -Throw '*PUBLISH_FIRMWARE_HASH_MISMATCH*'
     }
@@ -55,7 +61,7 @@ Describe 'ARM64 publish package validation' -Tag 'PackageIntegration' {
         $bom.metadata.component.version | Should -Be $version
         @($bom.components.'bom-ref' | Sort-Object -Unique).Count | Should -Be $bom.components.Count
         foreach ($binding in @(
-                @{ Ref = 'jis-ble-input-fw-0.1.0'; Path = 'firmware/xiao-nrf52840.ino.uf2' },
+                @{ Ref = "jis-ble-input-fw-$firmware"; Path = 'firmware/xiao-nrf52840.ino.uf2' },
                 @{ Ref = 'seeed-nrf52-sdk-1.1.13'; Path = 'firmware/rebuild/Seeed_nRF52_Boards-1.1.13.tar.bz2' })) {
             $component = @($bom.components | Where-Object 'bom-ref' -EQ $binding.Ref)
             $component.Count | Should -Be 1

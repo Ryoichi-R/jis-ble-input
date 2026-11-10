@@ -1,18 +1,26 @@
 #requires -Version 7.4
 [CmdletBinding()]
-param([Parameter(Mandatory)][string]$PublishPath, [Parameter(Mandatory)][string]$AppVersion)
+param([Parameter(Mandatory)][string]$PublishPath, [Parameter(Mandatory)][string]$AppVersion, [string]$FirmwareCachePath)
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $projectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $workspaceRoot = $projectRoot
 $PublishPath = [IO.Path]::GetFullPath($PublishPath)
 if (-not $PublishPath.StartsWith($workspaceRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) { throw 'Outside workspace.' }
-$cache = Join-Path $projectRoot '_internal/build-cache/firmware'
+$localCache = Join-Path $projectRoot '_internal/build-cache/firmware'
+$cache = if ($FirmwareCachePath) { [IO.Path]::GetFullPath($FirmwareCachePath) } else { $localCache }
 $build = Join-Path $cache 'build'
 . (Join-Path $PSScriptRoot 'Get-FirmwareSourceHash.ps1')
-$receipt = Get-Content -LiteralPath (Join-Path $build 'receipt.json') -Raw | ConvertFrom-Json
-if ($receipt.Status -ne 'Compiled' -or $receipt.Firmware -ne '0.1.0' -or $receipt.Protocol -ne 1) { throw 'FIRMWARE_RECEIPT_INVALID' }
+$receiptPath = Join-Path $build 'receipt.json'
+if (-not (Test-Path -LiteralPath $receiptPath -PathType Leaf)) { throw "FIRMWARE_BUILD_MISSING: $receiptPath" }
+$receipt = Get-Content -LiteralPath $receiptPath -Raw | ConvertFrom-Json
+$toolchain = Get-Content -LiteralPath (Join-Path $projectRoot 'firmware/xiao-nrf52840/toolchain.json') -Raw | ConvertFrom-Json
+if ($receipt.Status -ne 'Compiled' -or $receipt.Firmware -ne $toolchain.firmware -or $receipt.Protocol -ne $toolchain.protocol) { throw 'FIRMWARE_RECEIPT_INVALID' }
 if ($receipt.SourceSha256 -ne (Get-FirmwareSourceHash $projectRoot)) { throw 'FIRMWARE_SOURCE_DRIFT' }
+$appExe = Join-Path $PublishPath 'JisBleInput.exe'
+if (-not (Test-Path -LiteralPath $appExe -PathType Leaf)) { throw 'PUBLISHED_APP_MISSING' }
+$publishedVersion = [Diagnostics.FileVersionInfo]::GetVersionInfo($appExe).ProductVersion
+if ($publishedVersion -ne $AppVersion -or $toolchain.core.securityPatchedSha256 -ne $receipt.SecurityPatchHash) { throw 'FIRMWARE_COMPATIBILITY_MISMATCH' }
 $firmware = Join-Path $PublishPath 'firmware'
 $null = New-Item -ItemType Directory -Path $firmware -Force
 foreach ($name in @('xiao-nrf52840.ino.hex', 'xiao-nrf52840.ino.zip', 'xiao-nrf52840.ino.uf2')) {
@@ -53,7 +61,7 @@ Copy-Item -LiteralPath (Join-Path $coreRoot 'libraries/Bluefruit52Lib/examples/P
 $nordic = [IO.File]::ReadAllText((Join-Path $coreRoot 'cores/nRF5/nordic/softdevice/s140_nrf52_7.3.0_API/include/ble_gap.h'))
 [regex]::Match($nordic, '(?s)\A/\*.*?\*/').Value | Set-Content -LiteralPath (Join-Path $sdkLicense 'Nordic-SoftDevice-API.txt') -Encoding utf8NoBOM
 # Retain linkable build inputs for local relinking with the LGPL core.
-$objects = Join-Path $cache "linkable-objects/$([guid]::NewGuid().ToString('N'))"
+$objects = Join-Path $localCache "linkable-objects/$([guid]::NewGuid().ToString('N'))"
 $null = New-Item -ItemType Directory -Path $objects -Force
 foreach ($file in Get-ChildItem -LiteralPath $build -File -Recurse | Where-Object Extension -In '.o', '.a') {
     $destination = Join-Path $objects ([IO.Path]::GetRelativePath($build, $file.FullName))
@@ -62,9 +70,7 @@ foreach ($file in Get-ChildItem -LiteralPath $build -File -Recurse | Where-Objec
 }
 $objectZip = Join-Path $firmware 'rebuild/linkable-objects.zip'
 Compress-Archive -Path (Join-Path $objects '*') -DestinationPath $objectZip -Force
-$toolchain = Get-Content -LiteralPath (Join-Path $firmware 'toolchain.json') -Raw | ConvertFrom-Json
-if ($toolchain.app -ne $AppVersion -or $toolchain.core.securityPatchedSha256 -ne $receipt.SecurityPatchHash) { throw 'FIRMWARE_COMPATIBILITY_MISMATCH' }
 $descriptor = [Convert]::FromHexString([IO.File]::ReadAllText((Join-Path $projectRoot 'contracts/xiao-protocol-v1/descriptor.hex')).Trim())
 $descriptorSha256 = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($descriptor))
-[pscustomobject]@{ AppVersion = $AppVersion; Firmware = $receipt.Firmware; Protocol = 1; Board = 'XIAO nRF52840 Sense'; Fqbn = $toolchain.fqbn; DescriptorSha256 = $descriptorSha256; SourceSha256 = $receipt.SourceSha256; HardwareTested = $false; Images = @($receipt.Files) } |
+[pscustomobject]@{ AppVersion = $AppVersion; Firmware = $receipt.Firmware; Protocol = $receipt.Protocol; Board = 'XIAO nRF52840 Sense'; Fqbn = $toolchain.fqbn; DescriptorSha256 = $descriptorSha256; SourceSha256 = $receipt.SourceSha256; HardwareTested = $receipt.HardwareTested; Images = @($receipt.Files) } |
     ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $firmware 'compatibility.json') -Encoding utf8NoBOM

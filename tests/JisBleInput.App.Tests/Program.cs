@@ -71,6 +71,9 @@ internal static class UiTestProgram
         var send = Find<Button>(window, "SendButton");
         var clear = Find<Button>(window, "ClearDraftButton");
         var paste = Find<Button>(window, "PasteDraftButton");
+        var presetChoice = Find<ComboBox>(window, "PresetChoice");
+        var loadPreset = Find<Button>(window, "LoadPresetButton");
+        var settingsButton = Find<Button>(window, "SettingsButton");
         var pause = Find<Button>(window, "PauseButton");
         var resume = Find<Button>(window, "ResumeButton");
         var stop = Find<Button>(window, "StopButton");
@@ -79,6 +82,9 @@ internal static class UiTestProgram
             && resume.Visibility == Visibility.Collapsed && stop.Visibility == Visibility.Collapsed,
             "idle mode shows send, clear and paste without transfer controls");
         Check(Find<TextBlock>(window, "HostPlaceholder").Visibility == Visibility.Visible, "an empty connection selector has a visible label");
+        Check((string)presetChoice.SelectedItem == "定型文の選択…" && !loadPreset.IsEnabled,
+            "the preset picker opens on its prompt and requires a registered selection");
+        CheckPresetAlignment(window, settingsButton, loadPreset, clear, paste);
 
         window.Width = window.MinWidth;
         window.Height = window.MinHeight;
@@ -92,11 +98,12 @@ internal static class UiTestProgram
             && clear.ActualWidth / rowWidth is >= 0.16 and <= 0.24 && paste.ActualWidth / rowWidth is >= 0.16 and <= 0.24,
             "the idle row orders send, clear and paste with widths of about 3:1:1");
         Check(editor.ActualHeight >= 80 && send.ActualHeight >= 32, "the minimum window retains usable input and button heights");
+        CheckPresetAlignment(window, settingsButton, loadPreset, clear, paste);
         if (previewPath is not null) SavePreview(window, Path.ChangeExtension(previewPath, ".minimum.png"));
         window.Width = 440;
         window.Height = 480;
 
-        Find<Button>(window, "SettingsButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        settingsButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
         var settings = application.Windows.OfType<Window>().Single(candidate => candidate.Owner == window);
         Check(settings.IsVisible && window.Width == 440 && window.Height == 480, "settings open separately without enlarging the main window");
@@ -114,9 +121,41 @@ internal static class UiTestProgram
         Check(speed.SelectedIndex == 2, "mode changes preserve the selected ASCII speed");
         mode.SelectedIndex = 0;
         Check(speed.SelectedIndex == 2, "mode changes preserve the selected Japanese speed");
+        const string presetText = "https://example.com/";
+        editor.Text = presetText;
+        mode.SelectedIndex = 1;
+        speed.SelectedIndex = 1;
+        var register = window.Dispatcher.InvokeAsync(() =>
+        {
+            var manager = settings.OwnedWindows.OfType<TextPresetsWindow>().Single();
+            try
+            {
+                Find<Button>(manager, "NewPresetButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                Check(Find<TextBox>(manager, "PresetText").Text == presetText, "new preset takes the current draft");
+                Find<TextBox>(manager, "PresetName").Text = "試験用URL";
+                Find<Button>(manager, "SavePresetButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                Check(manager.Presets.Single() == new TextPreset("試験用URL", presetText, TextInputMode.Ascii, 1, null),
+                    "registration saves text, mode and active transport speed");
+            }
+            finally { manager.Close(); }
+        }, DispatcherPriority.ApplicationIdle);
+        Find<Button>(settings, "ManagePresetsButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        await register.Task;
+        Check(presetChoice.Items.Count == 2 && !loadPreset.IsEnabled, "returning from management refreshes the main picker");
         settings.Close();
         await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
         Check(!settings.IsVisible && window.IsVisible, "closing settings returns to the same main window");
+        editor.Text = "既存の本文";
+        mode.SelectedIndex = 0;
+        presetChoice.SelectedIndex = 1;
+        Check(loadPreset.IsEnabled && !window.TryLoadPreset(() => false) && editor.Text == "既存の本文" && mode.SelectedIndex == 0,
+            "canceling replacement retains the existing draft and mode");
+        Check(window.TryLoadPreset(() => true) && editor.Text == presetText && mode.SelectedIndex == 1 && speed.SelectedIndex == 1,
+            "confirmed load replaces only the local draft and selects the registered mode and speed");
+        editor.Clear();
+        loadPreset.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Check(editor.Text == presetText && !Find<TextBlock>(window, "TransferProgress").IsVisible,
+            "the load button fills an empty draft without a send");
         editor.Text = "A\r\n\r\nB\r\n";
         var draft = Find<TextBlock>(window, "DraftInfo");
         Check(draft.Text.Contains("改行3") && draft.ToolTip?.ToString()?.Contains("末尾改行あり") == true,
@@ -144,6 +183,8 @@ internal static class UiTestProgram
         window.ApplyTransferControls(SendState.Paused, true, false, true);
         Check(resume.IsVisible && resume.IsEnabled && send.Visibility == Visibility.Collapsed && stop.IsEnabled,
             "paused mode makes resume the primary action and retains stop");
+        Check(!presetChoice.IsEnabled && !loadPreset.IsEnabled && !window.TryLoadPreset(() => true),
+            "paused transfers cannot load a preset");
         window.ApplyTransferControls(SendState.Paused, true, false, false);
         Check(!resume.IsEnabled && stop.IsEnabled, "a lost target prevents resume while retaining stop");
         window.ApplyTransferControls(SendState.Idle, false, false, false);
@@ -201,6 +242,16 @@ internal static class UiTestProgram
         sessionWindow.PrepareForSessionEnd();
         sessionWindow.Close();
         Check(sessionClosed && !sessionWindow.TrayIconVisible, "session-end cleanup permits real closure instead of hiding");
+    }
+
+    private static void CheckPresetAlignment(Window window, Button settings, Button load, Button clear, Button paste)
+    {
+        double Left(Button button) => button.TranslatePoint(new Point(0, 0), window).X;
+        double Right(Button button) => Left(button) + button.ActualWidth;
+        Check(IsWithinContent(load, window) && Math.Abs(Left(load) - Left(clear)) < 0.1
+            && Math.Abs(Right(load) - Right(paste)) < 0.1, "load spans clear, paste and their gap");
+        Check(IsWithinContent(settings, window) && Math.Abs(settings.ActualWidth - paste.ActualWidth) < 0.1
+            && Math.Abs(Left(settings) - Left(paste)) < 0.1, "settings matches the paste width and alignment");
     }
 
     private static MainWindow MakeWindow() => new(autoStartBluetooth: false,
@@ -268,7 +319,8 @@ internal static class UiTestProgram
             previousWrites = transport.Writes;
             transport.Ready = false;
             await window.SendToAsync(target);
-            Check(transport.Writes == previousWrites && !message.Text.Contains("解放"),
+            Check(transport.Writes == previousWrites && !message.Text.Contains("解放") && !message.Text.Contains("一部入力")
+                && message.Text.Contains("送信を開始できませんでした"),
                 "a pre-start connection rejection does not reuse an old release result");
         }
         finally
@@ -301,8 +353,13 @@ internal static class UiTestProgram
                 editor.Text = "B";
                 await window.SendToAsync(connection.Target!);
                 Check(connection.Begins == 1, "a second send cannot overlap ARM preparation");
-                if (stopDuringArm) Find<Button>(window, "StopButton").RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
-                else connection.Allow.TrySetResult();
+                if (stopDuringArm)
+                {
+                    var stop = Find<Button>(window, "StopButton");
+                    stop.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
+                    Check(!operation.IsCompleted && !stop.IsEnabled, "XIAO Stop waits for the ARM response without accepting another stop");
+                }
+                connection.Allow.TrySetResult();
                 await operation;
                 Check(connection.Ends == 1 && !connection.CleanupCancelled, "ARM cleanup uses a separate live bounded token");
                 Check(stopDuringArm ? connection.Frames.All(frame => frame.All(value => value == 0))
@@ -323,6 +380,19 @@ internal static class UiTestProgram
         await closed.Task.WaitAsync(TimeSpan.FromSeconds(3));
         Check(exiting.Disposed && exiting.Ends == 1 && exiting.Frames.Count == 0,
             "exit during ARM cancels the whole transfer and closes USB without the local Bluetooth shutdown path");
+
+        var failing = new PreparingConnection();
+        var failingWindow = new MainWindow(false, Path.Combine(settingsRoot, "unexpected"), keyboardConnection: failing);
+        failingWindow.Show();
+        var arming = failingWindow.SendToAsync(failing.Target!);
+        await failing.Entered.Task;
+        var cleanup = failingWindow.StopAfterUnexpectedErrorAsync();
+        failing.Allow.TrySetResult();
+        await cleanup;
+        await arming;
+        Check(failing.Disposed && failing.Ends == 1 && failing.Frames.Count == 0,
+            "unexpected UI error attempts bounded disarm before closing USB and never starts the text");
+        failingWindow.Close();
     }
 
     private static async Task VerifyHostChoiceGuidanceAsync()
@@ -351,11 +421,11 @@ internal static class UiTestProgram
                         "choosing the XIAO PC clears the guidance and becomes ready");
                     var speed = Find<ComboBox>(window, "InputSpeed");
                     var mode = Find<ComboBox>(window, "InputMode");
-                    Check(speed.Items.Cast<string>().SequenceEqual(new[] { "遅め（0.10秒/文字）", "標準（0.05秒/文字）", "最速（0.025秒/文字）" })
+                    Check(speed.Items.Cast<string>().SequenceEqual(new[] { "遅め（約240 ms/文字）", "標準（約205 ms/文字）", "最速（約175 ms/文字）" })
                         && speed.SelectedIndex == 1, "XIAO Japanese shows three production presets and defaults to standard");
                     speed.SelectedIndex = 2;
                     mode.SelectedIndex = 1;
-                    Check(speed.Items.Cast<string>().SequenceEqual(new[] { "遅め（0.05秒/文字）", "標準（0.01秒/文字）", "最速（0.005秒/文字）" })
+                    Check(speed.Items.Cast<string>().SequenceEqual(new[] { "遅め（約65 ms/文字）", "標準（約30 ms/文字）", "最速（約25 ms/文字）" })
                         && speed.SelectedIndex == 1, "XIAO ASCII shows three production presets and defaults to standard");
                     speed.SelectedIndex = 2;
                     mode.SelectedIndex = 0;

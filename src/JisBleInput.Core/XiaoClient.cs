@@ -8,6 +8,11 @@ public interface IXiaoChannel : IDisposable
     Task WriteAsync(byte[] buffer, CancellationToken cancellation);
 }
 
+public sealed class XiaoRequestTimeoutException(bool requestStarted, Exception innerException)
+    : TimeoutException(requestStarted ? "XIAOの応答が途絶えました。" : "XIAOへの送信待ちが時間切れになりました。", innerException)
+{
+}
+
 public sealed record XiaoStatus(byte Flags, byte Mode, byte[] BoardId, byte[] PeerId, byte[] DescriptorHash, string Firmware)
 {
     public const int Length = 57;
@@ -62,8 +67,8 @@ public sealed class XiaoClient : IDisposable
 
     public async Task RequestAsync(XiaoCommand command, byte[] payload, uint generation, CancellationToken cancellation)
     {
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token, cancellation);
-        deadline.CancelAfter(timeout);
+        using var requestTimeout = new CancellationTokenSource(timeout);
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token, cancellation, requestTimeout.Token);
         uint number = 0;
         var completion = new TaskCompletionSource<XiaoFrame>(TaskCreationOptions.RunContinuationsAsynchronously);
         var sent = false;
@@ -83,8 +88,16 @@ public sealed class XiaoClient : IDisposable
             }
             finally { writer.Release(); }
             var response = await completion.Task.WaitAsync(deadline.Token).ConfigureAwait(false);
+            if (command == XiaoCommand.ClearBond && response.Payload[0] == (byte)XiaoResult.StorageFailed)
+                throw new IOException("XIAOの登録ファイルを削除できませんでした。基板に再接続して登録状態を確認してください。");
             if (response.Payload[0] != (byte)XiaoResult.Success)
                 throw new IOException($"XIAO操作失敗: {(XiaoResult)response.Payload[0]}。自動再送しません。");
+        }
+        catch (OperationCanceledException error) when (requestTimeout.IsCancellationRequested
+            && !cancellation.IsCancellationRequested && !lifetime.IsCancellationRequested)
+        {
+            if (sent) Abort();
+            throw new XiaoRequestTimeoutException(sent, error);
         }
         catch
         {

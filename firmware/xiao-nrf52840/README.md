@@ -1,6 +1,6 @@
-# XIAO nRF52840 Sense / JIS BLE Keyboard 0.1.0
+# XIAO nRF52840 Sense / JIS BLE Keyboard 0.1.1
 
-アプリ1.7.1・1.8.0・1.9.0・1.10.0・1.11.0・1.12.0に対応するXIAO nRF52840 Sense（通常時PID 8045）用FW 0.1.0です。USB protocol 1を使用します。実機受入に使用した配布ZIPは `jis-ble-input-1.7.0-xiao-preview.7-win-arm64.zip` です。2026-11-05〜06にWindows ARM64標準ドライバー（usbser）での接続、DFUによる書込、BLE接続、受信Windowsでのキーボード分類と再起動後の維持、日本語・混在文の入力、停止・接続障害からの復帰を利用者報告で確認しました。試験範囲はアプリ同梱の `VALIDATION.md` を参照してください。
+アプリ1.13.1・1.13.2に対応するXIAO nRF52840 Sense（通常時PID 8045）用FW 0.1.1です。登録解除時に保存ファイルを削除できない場合は失敗を返します。USB protocol 1を使用します。続く実機受入記録は旧FW 0.1.0についてのものです。実機受入に使用した配布ZIPは `jis-ble-input-1.7.0-xiao-preview.7-win-arm64.zip` です。2026-11-05〜06にWindows ARM64標準ドライバー（usbser）での接続、DFUによる書込、BLE接続、受信Windowsでのキーボード分類と再起動後の維持、日本語・混在文の入力、停止・接続障害からの復帰を利用者報告で確認しました。試験範囲はアプリ同梱の `VALIDATION.md` を参照してください。
 
 ## 使い始めるまで
 
@@ -24,7 +24,7 @@ HMACは使わず、送信PC上でUSBを操作できるプロセスを信頼す�
 
 ## 停止と復旧
 
-「停止」は未処理の本文を破棄し、DISARMとゼロ解放を試みる。結果未確認の場合は受信側の既存キーボードでキー・IME・入力欄を確認する。基板のUSBを外す場合も自動再送しない。復帰後は新規送信として開始する。
+「停止」は処理中のUSB要求の応答を待ち、未処理の本文を破棄してゼロ解放とDISARMを試みる。応答が途絶えた場合はUSBを閉じる。結果未確認の場合は受信側の既存キーボードでキー・IME・入力欄を確認する。基板のUSBを外す場合も自動再送しない。復帰後は新規送信として開始する。
 
 書込失敗・アプリが応答しない場合は、RESETを2回押してbootloaderへ戻し、保持した既知の正常アプリimageを再書込する。アプリ領域だけを扱い、フラッシュ全消去、bootloader更新、SoftDevice更新は行わない。bootloaderにも入れない場合はこの手順の対象外で、SWD復旧を自動実行しない。基板の登録変更はアプリの「基板の登録を解除」で1件を明示確認して行う。PC全体のBluetooth登録は消さない。
 
@@ -41,9 +41,9 @@ pwsh -NoProfile -File scripts/Build-Firmware.ps1
 
 初回prepareは公式サイトからダウンロードする。以後build/testはキャッシュだけを使う。ビルド中に基板は開かない。旧GCCのMAX_PATH制約のため同じ固定コンパイラーをキャッシュ直下`gcc9`へコピーする。出力は`_internal/build-cache/firmware/build/`、.hex/.zip/.uf2とreceiptにハッシュを保存する。`Test-FirmwareImage.py`でIntel HEX checksum・範囲・UF2 family/範囲/HEX一致を検査する。失敗後は古いreceiptのハッシュと一致しないため書込・梱包を拒否する。
 
-SDK 1.1.13のBluefruit0.21.0/TinyUSB1.7.0と実ヘッダーを照合して実target compile済み。上流masterのAPIを無条件には使用しない。BLECharacteristicの待機型notifyを避け、単一loopがSoftDeviceの非ブロッキング通知を呼ぶ。SEC_PARAMS_REQUESTの窓外拒否だけSDKへ追加し、変更はworkspace内に限定する。patch前後のハッシュはビルドで検査する。
+対象SDKは1.1.13のBluefruit 0.21.0とTinyUSB 1.7.0。上流masterのAPIを無条件には使用しない。BLECharacteristicの待機型notifyを避け、単一loopがSoftDeviceの非ブロッキング通知を呼ぶ。SEC_PARAMS_REQUESTの窓外拒否だけSDKへ追加し、変更はworkspace内に限定する。patch前後のハッシュはビルドで検査する。
 
-自動検証と実機検証は別。初回にUSB serial/HELLO一致、書込・復旧、広告/GATT/分類、JIS/US ASCII95文字と日本語、100/1000/2000単位、CapsLock・Boot/Report・suspend、USB/BLE抜去・再接続・停止、長時間トレイ滞在を現物で確認する。C++の`-Wall -Wextra -Werror`はホストテスト（Zig、C++11）で適用する。2026-11-06から`Test-Firmware.ps1`がLLVM 23.1.2（`Prepare-FirmwareTools.ps1`でホスト対応版を取得。対応するMSVC C++開発ツールが前提。ARM64版の展開にはzstd CLIも必要）で`src/*.h`の行coverageを計測し、90%未満で失敗する（初回99.43%。`.ino`のSDK境界は対象外）。C++書式は`.clang-format`と`scripts/Test-FirmwareFormat.ps1`で検査する。現ソースは未整形でreceiptには`NOT_CONFORMING`と記録され、次のFW変更時に`-Fix`で整形してから`-Enforce`へ切り替える。workspace共通formatterにはC++用adapterがない。`toolchain.json`の`lineCoverage`/`cppFormatting`はsource hashの対象のためbuild時点の値のまま残し、現在値はhost-testsのreceiptを正とする。
+自動検証と実機検証は別。初回にUSB serial/HELLO一致、書込・復旧、広告/GATT/分類、JIS/US ASCII95文字と日本語、100/1000/2000単位、CapsLock・Boot/Report・suspend、USB/BLE抜去・再接続・停止、長時間トレイ滞在を現物で確認する。C++の`-Wall -Wextra -Werror`はホストテスト（Zig、C++11）で適用する。2026-11-06から`Test-Firmware.ps1`がLLVM 23.1.2（`Prepare-FirmwareTools.ps1`でホスト対応版を取得。対応するMSVC C++開発ツールが前提。ARM64版の展開にはzstd CLIも必要）で`src/*.h`の行coverageを計測し、90%未満で失敗する（初回99.43%。`.ino`のSDK境界は対象外）。C++書式は`.clang-format`と`scripts/Test-FirmwareFormat.ps1`で検査する。ホスト検証では `-Enforce` を使い、書式不適合を失敗として扱う。workspace共通formatterにはC++用adapterがない。カバレッジと書式の結果はhost-testsのreceipt、実機の結果はアプリ同梱のVALIDATION.mdに記録する。
 
 ## ライセンスと再ビルド資料
 

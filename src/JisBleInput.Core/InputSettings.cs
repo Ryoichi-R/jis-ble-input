@@ -67,15 +67,15 @@ public sealed class InputSettings
         ["ゆっくり（0.12秒/文字）", "高速（0.08秒/文字）", "最速（0.05秒/文字）"];
     private static readonly (string Label, JapaneseSpeed Speed)[] XiaoJapaneseSpeeds =
     [
-        ("遅め（0.10秒/文字）", JapaneseSpeed.XiaoSlow),
-        ("標準（0.05秒/文字）", JapaneseSpeed.XiaoStandard),
-        ("最速（0.025秒/文字）", JapaneseSpeed.XiaoFastest)
+        ("遅め（約240 ms/文字）", JapaneseSpeed.XiaoSlow),
+        ("標準（約205 ms/文字）", JapaneseSpeed.XiaoStandard),
+        ("最速（約175 ms/文字）", JapaneseSpeed.XiaoFastest)
     ];
     private static readonly (string Label, AsciiSpeed Speed)[] XiaoAsciiSpeeds =
     [
-        ("遅め（0.05秒/文字）", AsciiSpeed.Fastest),
-        ("標準（0.01秒/文字）", AsciiSpeed.XiaoStandard),
-        ("最速（0.005秒/文字）", AsciiSpeed.XiaoFastest)
+        ("遅め（約65 ms/文字）", AsciiSpeed.Fastest),
+        ("標準（約30 ms/文字）", AsciiSpeed.XiaoStandard),
+        ("最速（約25 ms/文字）", AsciiSpeed.XiaoFastest)
     ];
 
     public static IReadOnlyList<string> SpeedLabels(TextInputMode mode, bool useXiao = false) => (mode, useXiao) switch

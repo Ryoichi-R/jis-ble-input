@@ -7,6 +7,7 @@ $projectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 [xml]$definition = [IO.File]::ReadAllText((Join-Path $projectRoot 'src/JisBleInput.App/JisBleInput.App.csproj'))
 $appVersion = [string]$definition.Project.PropertyGroup.Version
 $runtimeVersion = [string]$definition.Project.PropertyGroup.BundledRuntimeVersion
+$firmwareVersion = (Get-Content -LiteralPath (Join-Path $PublishPath 'firmware/compatibility.json') -Raw | ConvertFrom-Json).Firmware
 $publish = [IO.Path]::GetFullPath($PublishPath)
 if (-not $publish.StartsWith($projectRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) { throw 'SBOM_OUTPUT_OUTSIDE_PROJECT' }
 $assets = [IO.File]::ReadAllText((Join-Path $projectRoot '_internal/build-cache/obj/JisBleInput.App/project.assets.json')) | ConvertFrom-Json -AsHashtable
@@ -50,7 +51,7 @@ $components.Add([ordered]@{
     })
 $image = Join-Path $publish 'firmware/xiao-nrf52840.ino.uf2'
 $components.Add([ordered]@{
-        type = 'firmware'; 'bom-ref' = 'jis-ble-input-fw-0.1.0'; name = 'JIS BLE Keyboard Sense firmware'; version = '0.1.0'
+        type = 'firmware'; 'bom-ref' = "jis-ble-input-fw-$firmwareVersion"; name = 'JIS BLE Keyboard Sense firmware'; version = $firmwareVersion
         hashes = @(@{ alg = 'SHA-256'; content = (Get-FileHash -LiteralPath $image).Hash.ToLowerInvariant() })
     })
 $bom = [ordered]@{

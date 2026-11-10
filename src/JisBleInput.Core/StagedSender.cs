@@ -18,6 +18,7 @@ public sealed class StagedSender(IReportTransport transport, Func<int, Cancellat
     private readonly Func<int, CancellationToken, Task> wait = delay ?? ((ms, token) => Task.Delay(ms, token));
     private readonly TimeProvider clock = timeProvider ?? TimeProvider.System;
     private CancellationTokenSource? stop;
+    private CancellationTokenSource? stopScheduling;
     private SendTarget? activeTarget;
     private TaskCompletionSource? resumeSignal;
     private bool pauseRequested;
@@ -73,15 +74,18 @@ public sealed class StagedSender(IReportTransport transport, Func<int, Cancellat
     private Task Start(TextSnapshot? snapshot, SendTarget destination, SendOptions options, CancellationToken externalCancellation)
     {
         externalCancellation.ThrowIfCancellationRequested();
-        CancellationToken cancellation;
+        CancellationToken cancellation, ioCancellation;
         SendState state;
         lock (sync)
         {
             if (busy) throw new InvalidOperationException("送信処理中です。");
             if (!transport.IsReady(destination)) throw new InvalidOperationException("接続先を確認してください。");
+            stopScheduling?.Dispose();
             stop?.Dispose();
             stop = CancellationTokenSource.CreateLinkedTokenSource(externalCancellation);
-            cancellation = stop.Token;
+            ioCancellation = stop.Token;
+            stopScheduling = CancellationTokenSource.CreateLinkedTokenSource(ioCancellation);
+            cancellation = stopScheduling.Token;
             activeTarget = destination;
             resumeSignal = null;
             pauseRequested = false;
@@ -95,7 +99,7 @@ public sealed class StagedSender(IReportTransport transport, Func<int, Cancellat
         }
         StateChanged?.Invoke(state);
         // Exactly one worker owns the snapshot, destination generation and queue.
-        return RunAsync(snapshot, destination, options, cancellation);
+        return RunAsync(snapshot, destination, options, cancellation, ioCancellation);
     }
 
     public bool RequestPause()
@@ -133,12 +137,13 @@ public sealed class StagedSender(IReportTransport transport, Func<int, Cancellat
         signal.TrySetResult();
     }
 
-    public void Cancel()
+    public void Cancel(bool finishCurrentWrite = false)
     {
         var changed = false;
         lock (sync)
         {
-            stop?.Cancel();
+            if (finishCurrentWrite) stopScheduling?.Cancel();
+            else stop?.Cancel();
             if (busy)
             {
                 State = SendState.StoppedPartial;
@@ -155,13 +160,13 @@ public sealed class StagedSender(IReportTransport transport, Func<int, Cancellat
         activeSince = null;
     }
 
-    private async Task<bool> WaitIfPausedAsync(SendTarget destination, CancellationToken cancellation)
+    private async Task<bool> WaitIfPausedAsync(SendTarget destination, CancellationToken cancellation, CancellationToken ioCancellation)
     {
         cancellation.ThrowIfCancellationRequested();
         lock (sync) { if (!pauseRequested) return false; }
         // A pause starts only between complete character sequences, never between
         // code entry and IME commit. Do not leave a modifier held while waiting.
-        await transport.WriteAsync(new byte[8], destination, cancellation);
+        await transport.WriteAsync(new byte[8], destination, ioCancellation);
         TaskCompletionSource signal;
         lock (sync)
         {
@@ -178,18 +183,20 @@ public sealed class StagedSender(IReportTransport transport, Func<int, Cancellat
         return true;
     }
 
-    private async Task WriteStepsAsync(IReadOnlyList<KeyStep> steps, SendTarget destination, CancellationToken cancellation)
+    private async Task WriteStepsAsync(IReadOnlyList<KeyStep> steps, SendTarget destination,
+        CancellationToken cancellation, CancellationToken ioCancellation)
     {
         foreach (var step in steps)
         {
             cancellation.ThrowIfCancellationRequested();
             if (!transport.IsReady(destination)) throw new InvalidOperationException("接続先またはCapsLockの状態が変わりました。");
-            await transport.WriteAsync(step.Stroke.ToReport(), destination, cancellation);
+            await transport.WriteAsync(step.Stroke.ToReport(), destination, ioCancellation);
             await wait(step.DelayMilliseconds, cancellation);
         }
     }
 
-    private async Task RunAsync(TextSnapshot? snapshot, SendTarget destination, SendOptions options, CancellationToken cancellation)
+    private async Task RunAsync(TextSnapshot? snapshot, SendTarget destination, SendOptions options,
+        CancellationToken cancellation, CancellationToken ioCancellation)
     {
         try
         {
@@ -197,19 +204,19 @@ public sealed class StagedSender(IReportTransport transport, Func<int, Cancellat
             {
                 // Optional setup changes IME mode only: no text, F5 or Enter.
                 await WriteStepsAsync(options.Mode == TextInputMode.Ascii ? AsciiKeyEncoder.EncodePreparation()
-                    : ImeKeyEncoder.EncodePreparation(options.Speed), destination, cancellation);
+                    : ImeKeyEncoder.EncodePreparation(options.Speed), destination, cancellation, ioCancellation);
             }
             else
             {
                 for (var index = 0; index < snapshot.UnitCount; index++)
                 {
-                    var resumed = await WaitIfPausedAsync(destination, cancellation);
+                    var resumed = await WaitIfPausedAsync(destination, cancellation, ioCancellation);
                     if (options.Mode == TextInputMode.Ascii && (index == 0 || resumed))
-                        await WriteStepsAsync(AsciiKeyEncoder.EncodePreparation(), destination, cancellation);
+                        await WriteStepsAsync(AsciiKeyEncoder.EncodePreparation(), destination, cancellation, ioCancellation);
                     var unit = snapshot.Units[index];
                     await WriteStepsAsync(unit.IsLineBreak ? ImeKeyEncoder.EncodeLineBreak()
                         : options.Mode == TextInputMode.Ascii ? AsciiKeyEncoder.EncodeCharacter(unit.Character, options.Layout, options.DirectSpeed)
-                        : ImeKeyEncoder.EncodeCharacter(unit.Character, options.Speed), destination, cancellation);
+                        : ImeKeyEncoder.EncodeCharacter(unit.Character, options.Speed), destination, cancellation, ioCancellation);
                     cancellation.ThrowIfCancellationRequested();
                     lock (sync) ProcessedCharacters = index + 1;
                     Progress?.Invoke(ProcessedCharacters, snapshot.UnitCount);

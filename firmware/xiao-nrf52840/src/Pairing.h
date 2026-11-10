@@ -16,9 +16,12 @@ inline bool pairingWindowExpired(bool allowed, uint32_t started, uint32_t now) {
 
 // Bluefruit queues bond persistence to its callback task after AUTH_STATUS, so a
 // just-paired bond may not be readable yet. Keep waiting while the window is open.
-enum class RegistrationStep : uint8_t { Wait, Save, Abort };
+enum class RegistrationStep : uint8_t { Wait,
+                                        Save,
+                                        Abort };
 inline RegistrationStep registrationStep(bool windowOpen, bool bondLoaded) {
-    return !windowOpen ? RegistrationStep::Abort : bondLoaded ? RegistrationStep::Save : RegistrationStep::Wait;
+    return !windowOpen ? RegistrationStep::Abort : bondLoaded ? RegistrationStep::Save
+                                                              : RegistrationStep::Wait;
 }
 
 // A reconnect outside the window must present the bond saved for the one registered identity.
@@ -26,4 +29,4 @@ inline bool knownPeer(bool registered, bool bondLoaded, const uint8_t address[6]
                       const uint8_t expected[6], uint8_t expectedType) {
     return registered && bondLoaded && type == expectedType && memcmp(address, expected, 6) == 0;
 }
-}
+} // namespace jbi
