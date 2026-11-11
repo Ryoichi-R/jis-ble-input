@@ -1,6 +1,6 @@
 # XIAOの送信速度を実機で測る
 
-送信側はJIS BLE Input 1.13.2、XIAO nRF52840 SenseはFW 0.1.0または0.1.1を使います。アプリのZIPを送信Surface上の新しいフォルダーに展開し、旧版をタスクトレイから終了してから `JisBleInput.exe` を起動します。すでに動作している基板はそのまま接続できます。受信側はWindows標準のメモ帳とMicrosoft IMEを使います。
+送信側はJIS BLE Input 1.14.0、XIAO nRF52840 SenseはFW 0.1.0または0.1.1を使います。アプリのZIPを送信Surface上の新しいフォルダーに展開し、旧版をタスクトレイから終了してから `JisBleInput.exe` を起動します。すでに動作している基板はそのまま接続できます。受信側はWindows標準のメモ帳とMicrosoft IMEを使います。
 
 ## 日本語・混在文を測る
 

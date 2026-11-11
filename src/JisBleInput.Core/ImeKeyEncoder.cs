@@ -17,6 +17,8 @@ public readonly record struct TextUnit(int SourceOffset, int SourceLength, char 
 
 public sealed class TextSnapshot
 {
+    public const int MaxInputUnits = 5000;
+
     public string Text { get; }
     public IReadOnlyList<TextUnit> Units { get; }
     public int UnitCount => Units.Count;
@@ -41,9 +43,9 @@ public sealed class TextSnapshot
     public static TextSnapshot Create(string text, bool allowLineBreaks = false)
     {
         ArgumentNullException.ThrowIfNull(text);
-        if (text.Length is 0 or > 4000 || CountInputUnits(text) > 2000)
+        if (text.Length is 0 or > MaxInputUnits * 2 || CountInputUnits(text) > MaxInputUnits)
         {
-            throw new ArgumentException("実験版の送信文字数は1〜2,000文字です。改行（CRLFを含む）は1文字として数えます。");
+            throw new ArgumentException($"送信文字数は1〜{MaxInputUnits:N0}文字です。改行（CRLFを含む）は1文字として数えます。");
         }
         var units = new List<TextUnit>();
         for (var index = 0; index < text.Length; index++)

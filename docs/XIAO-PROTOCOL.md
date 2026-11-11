@@ -1,6 +1,6 @@
 # XIAO USB protocol 1 / firmware 0.1.0・0.1.1
 
-対象はXIAO nRF52840 Senseとアプリ1.13.2。HMACは利用者の選択により採用しない。USBを開ける送信PCのプロセスを信頼する。CRC・session・USBシリアル番号は送信元認証ではない。
+対象はXIAO nRF52840 Senseとアプリ1.14.0。HMACは利用者の選択により採用しない。USBを開ける送信PCのプロセスを信頼する。CRC・session・USBシリアル番号は送信元認証ではない。
 
 ## 接続とフレーム
 

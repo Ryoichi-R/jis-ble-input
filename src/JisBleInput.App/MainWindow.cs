@@ -125,7 +125,7 @@ internal sealed class MainWindow : Window
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "JisBleInput");
         transportStore = new TransportPreferencesStore(Path.Combine(preferencesRoot, "transport-preferences.json"));
         try { transportPreferences = transportStore.Load(); }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException)
+        catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException or JsonException)
         { message.Text = "送信方式の設定を読み込めませんでした。方式を選び直してください。"; }
         bluetooth.Dispose();
         bluetooth = keyboardConnection ?? (transportPreferences.Method == ConnectionMethod.XiaoUsb ? new XiaoSerialKeyboard() : new LocalBleConnection());
@@ -134,7 +134,7 @@ internal sealed class MainWindow : Window
         connectionMethod.SelectedIndex = bluetooth.UsesLocalBluetooth ? 0 : 1;
         connectionStore = new ConnectionPreferencesStore(Path.Combine(preferencesRoot, "connection-preferences.json"));
         try { connectionPreferences = connectionStore.Load(); }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException)
+        catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException or JsonException)
         {
             connectionPreferences = new(AutoReconnect: false);
             message.Text = "前回の接続設定を読み込めませんでした。接続先を選び直してください。";
@@ -300,6 +300,9 @@ internal sealed class MainWindow : Window
             }
             if (state == SendState.Sending)
                 message.Text = "";
+            // A paused transfer waits for the user indefinitely; let the PC sleep.
+            if (state == SendState.Paused) TransferKeepAwake.End();
+            else if (state == SendState.Sending && working) TransferKeepAwake.Begin();
             UpdateProgress();
             UpdateButtons();
         });
@@ -749,6 +752,7 @@ internal sealed class MainWindow : Window
         try
         {
             activeTarget = destination;
+            TransferKeepAwake.Begin();
             if (useConnectionHooks)
             {
                 if (!bluetooth.IsReady(destination)) throw new InvalidOperationException("接続先を確認してください。");
@@ -808,6 +812,7 @@ internal sealed class MainWindow : Window
                 else if (sender.State is SendState.Faulted or SendState.StoppedPartial)
                     message.Text += " キー解放の操作は送信済みです。受信側の実状態は未確認です。キー・IME・入力欄を確認してください。";
             }
+            TransferKeepAwake.End();
             working = false;
             preparingTransfer = false;
             stoppingByUser = false;
@@ -932,7 +937,7 @@ internal sealed class MainWindow : Window
         var draft = editor.Text;
         var lineBreaks = draft.Count(c => c == '\r')
             + draft.Where((c, index) => c == '\n' && (index == 0 || draft[index - 1] != '\r')).Count();
-        draftInfo.Text = $"{TextSnapshot.CountInputUnits(draft):N0} / 2,000文字 · 改行{lineBreaks:N0}";
+        draftInfo.Text = $"{TextSnapshot.CountInputUnits(draft):N0} / {TextSnapshot.MaxInputUnits:N0}文字 · 改行{lineBreaks:N0}";
         draftInfo.ToolTip = "改行は受信側へEnterとして送ります。";
         if (draft.StartsWith('\r') || draft.StartsWith('\n')) draftInfo.ToolTip += " 先頭改行あり。";
         if (draft.EndsWith('\r') || draft.EndsWith('\n')) draftInfo.ToolTip += " 末尾改行あり。";

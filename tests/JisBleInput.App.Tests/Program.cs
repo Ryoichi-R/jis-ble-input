@@ -48,6 +48,8 @@ internal static class UiTestProgram
         Check(new HostChoice(hostA.Id, "変更後PC").Fingerprint == hostA.Fingerprint,
             "renaming a computer does not change its presentation identifier");
         await VerifyTransferFailuresAsync();
+        VerifyUnsupportedPreferences();
+        await VerifyKeepAwakeAsync();
         await VerifyConnectionPreparationAsync();
         await VerifyHostChoiceGuidanceAsync();
         await XiaoConnectionChecks.RunAsync(Check);
@@ -161,7 +163,7 @@ internal static class UiTestProgram
         Check(draft.Text.Contains("改行3") && draft.ToolTip?.ToString()?.Contains("末尾改行あり") == true,
             "compact counts preserve the CRLF Enter count and trailing-newline warning");
         clear.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-        Check(editor.Text.Length == 0 && draft.Text == "0 / 2,000文字 · 改行0"
+        Check(editor.Text.Length == 0 && draft.Text == "0 / 5,000文字 · 改行0"
             && !Find<TextBlock>(window, "TransferProgress").IsVisible, "clear only empties the sender draft and refreshes its counts");
         editor.Text = "A?B";
         editor.Select(1, 1);
@@ -327,6 +329,74 @@ internal static class UiTestProgram
         {
             window.PrepareForSessionEnd();
             window.Close();
+        }
+    }
+
+    private static async Task VerifyKeepAwakeAsync()
+    {
+        var requests = new List<uint>();
+        var original = TransferKeepAwake.Apply;
+        TransferKeepAwake.Apply = flags => { requests.Add(flags); return 0; };
+        var transport = new FailingTransport { FailRelease = false };
+        var window = new MainWindow(autoStartBluetooth: false,
+            preferencesDirectory: Path.Combine(Directory.GetCurrentDirectory(), "_internal", "build-cache", "test-data", "jis-ble-ui-preferences", Guid.NewGuid().ToString("N")),
+            reportTransport: transport);
+        try
+        {
+            var editor = Find<TextBox>(window, "Editor");
+            var target = new SendTarget("synthetic-target", 1);
+            editor.Text = "A\tB";
+            await window.SendToAsync(target);
+            Check(requests.Count == 0, "a rejected text never requests keep-awake");
+            foreach (var cancel in new[] { false, true })
+            {
+                requests.Clear();
+                transport.CancelSend = cancel;
+                editor.Text = "A";
+                await window.SendToAsync(target);
+                await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+                Check(requests.Count >= 2 && requests[0] == TransferKeepAwake.KeepAwake
+                    && requests[^1] == TransferKeepAwake.Continuous,
+                    $"a {(cancel ? "cancelled" : "failed")} transfer requests keep-awake and always clears it");
+            }
+        }
+        finally
+        {
+            TransferKeepAwake.Apply = original;
+            window.PrepareForSessionEnd();
+            window.Close();
+        }
+    }
+
+    // Validation failures are InvalidDataException, which is not an IOException.
+    private static void VerifyUnsupportedPreferences()
+    {
+        var settingsRoot = Path.Combine(Directory.GetCurrentDirectory(), "_internal", "build-cache", "test-data", "jis-ble-ui-preferences", Guid.NewGuid().ToString("N"));
+        var cases = new (string File, string Content, string Notice)[]
+        {
+            ("transport-preferences.json", "{\"Version\":2}", "送信方式の設定を読み込めませんでした"),
+            ("transport-preferences.json", "{\"Version\":1,\"Method\":9}", "送信方式の設定を読み込めませんでした"),
+            ("transport-preferences.json", new string(' ', 4097), "送信方式の設定を読み込めませんでした"),
+            ("connection-preferences.json", "{\"Version\":2}", "前回の接続設定を読み込めませんでした"),
+            ("connection-preferences.json", "{\"Version\":1,\"PeerHash\":\"short\"}", "前回の接続設定を読み込めませんでした"),
+            ("connection-preferences.json", "null", "前回の接続設定を読み込めませんでした")
+        };
+        for (var index = 0; index < cases.Length; index++)
+        {
+            var directory = Path.Combine(settingsRoot, index.ToString());
+            Directory.CreateDirectory(directory);
+            File.WriteAllText(Path.Combine(directory, cases[index].File), cases[index].Content);
+            var window = new MainWindow(autoStartBluetooth: false, preferencesDirectory: directory);
+            try
+            {
+                Check(Find<TextBlock>(window, "TransferMessage").Text.Contains(cases[index].Notice),
+                    $"unsupported {cases[index].File} case {index} opens with defaults and a notice");
+            }
+            finally
+            {
+                window.PrepareForSessionEnd();
+                window.Close();
+            }
         }
     }
 

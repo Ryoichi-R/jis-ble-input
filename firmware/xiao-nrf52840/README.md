@@ -1,6 +1,6 @@
 # XIAO nRF52840 Sense / JIS BLE Keyboard 0.1.1
 
-アプリ1.13.1・1.13.2に対応するXIAO nRF52840 Sense（通常時PID 8045）用FW 0.1.1です。登録解除時に保存ファイルを削除できない場合は失敗を返します。USB protocol 1を使用します。続く実機受入記録は旧FW 0.1.0についてのものです。実機受入に使用した配布ZIPは `jis-ble-input-1.7.0-xiao-preview.7-win-arm64.zip` です。2026-11-05〜06にWindows ARM64標準ドライバー（usbser）での接続、DFUによる書込、BLE接続、受信Windowsでのキーボード分類と再起動後の維持、日本語・混在文の入力、停止・接続障害からの復帰を利用者報告で確認しました。試験範囲はアプリ同梱の `VALIDATION.md` を参照してください。
+アプリ1.13.1・1.13.2・1.14.0に対応するXIAO nRF52840 Sense（通常時PID 8045）用FW 0.1.1です。登録解除時に保存ファイルを削除できない場合は失敗を返します。USB protocol 1を使用します。続く実機受入記録は旧FW 0.1.0についてのものです。実機受入に使用した配布ZIPは `jis-ble-input-1.7.0-xiao-preview.7-win-arm64.zip` です。2026-11-05〜06にWindows ARM64標準ドライバー（usbser）での接続、DFUによる書込、BLE接続、受信Windowsでのキーボード分類と再起動後の維持、日本語・混在文の入力、停止・接続障害からの復帰を利用者報告で確認しました。試験範囲はアプリ同梱の `VALIDATION.md` を参照してください。
 
 ## 使い始めるまで
 
@@ -43,7 +43,7 @@ pwsh -NoProfile -File scripts/Build-Firmware.ps1
 
 対象SDKは1.1.13のBluefruit 0.21.0とTinyUSB 1.7.0。上流masterのAPIを無条件には使用しない。BLECharacteristicの待機型notifyを避け、単一loopがSoftDeviceの非ブロッキング通知を呼ぶ。SEC_PARAMS_REQUESTの窓外拒否だけSDKへ追加し、変更はworkspace内に限定する。patch前後のハッシュはビルドで検査する。
 
-自動検証と実機検証は別。初回にUSB serial/HELLO一致、書込・復旧、広告/GATT/分類、JIS/US ASCII95文字と日本語、100/1000/2000単位、CapsLock・Boot/Report・suspend、USB/BLE抜去・再接続・停止、長時間トレイ滞在を現物で確認する。C++の`-Wall -Wextra -Werror`はホストテスト（Zig、C++11）で適用する。2026-11-06から`Test-Firmware.ps1`がLLVM 23.1.2（`Prepare-FirmwareTools.ps1`でホスト対応版を取得。対応するMSVC C++開発ツールが前提。ARM64版の展開にはzstd CLIも必要）で`src/*.h`の行coverageを計測し、90%未満で失敗する（初回99.43%。`.ino`のSDK境界は対象外）。C++書式は`.clang-format`と`scripts/Test-FirmwareFormat.ps1`で検査する。ホスト検証では `-Enforce` を使い、書式不適合を失敗として扱う。workspace共通formatterにはC++用adapterがない。カバレッジと書式の結果はhost-testsのreceipt、実機の結果はアプリ同梱のVALIDATION.mdに記録する。
+自動検証と実機検証は別。初回にUSB serial/HELLO一致、書込・復旧、広告/GATT/分類、JIS/US ASCII95文字と日本語、100/1000/5000単位、CapsLock・Boot/Report・suspend、USB/BLE抜去・再接続・停止、長時間トレイ滞在を現物で確認する。C++の`-Wall -Wextra -Werror`はホストテスト（Zig、C++11）で適用する。2026-11-06から`Test-Firmware.ps1`がLLVM 23.1.2（`Prepare-FirmwareTools.ps1`でホスト対応版を取得。対応するMSVC C++開発ツールが前提。ARM64版の展開にはzstd CLIも必要）で`src/*.h`の行coverageを計測し、90%未満で失敗する（初回99.43%。`.ino`のSDK境界は対象外）。C++書式は`.clang-format`と`scripts/Test-FirmwareFormat.ps1`で検査する。ホスト検証では `-Enforce` を使い、書式不適合を失敗として扱う。workspace共通formatterにはC++用adapterがない。カバレッジと書式の結果はhost-testsのreceipt、実機の結果はアプリ同梱のVALIDATION.mdに記録する。
 
 ## ライセンスと再ビルド資料
 

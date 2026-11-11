@@ -32,12 +32,20 @@ var messagePreset = new TextPreset("受付", "受付しました。\r\n", TextIn
 presetStore.Save([urlPreset, messagePreset]);
 Check(new TextPresetStore(presetPath).Load().Presets.SequenceEqual([urlPreset, messagePreset]),
     "presets retain exact text, mode and independent optional transport speeds across reload");
+var fullLengthPresets = Enumerable.Range(1, TextPresetStore.MaxPresets)
+    .Select(index => messagePreset with { Name = new string('日', 77) + $"{index:D3}", Text = new string('日', 5000) })
+    .ToArray();
+presetStore.Save(fullLengthPresets);
+var loadedFullLengthPresets = presetStore.Load();
+Check(!loadedFullLengthPresets.NeedsBackup && loadedFullLengthPresets.Presets.SequenceEqual(fullLengthPresets),
+    "100 maximum-length Japanese presets fit the existing file limit and reload without loss");
+presetStore.Save([urlPreset, messagePreset]);
 foreach (var invalid in new[]
 {
     urlPreset with { Text = "Ａ" },
     urlPreset with { BluetoothSpeed = 3 },
     urlPreset with { XiaoSpeed = -1 },
-    messagePreset with { Text = new string('A', 2001) },
+    messagePreset with { Text = new string('A', 5001) },
     messagePreset with { Name = "url" }
 })
 {
@@ -84,7 +92,7 @@ var descriptor = InspectDescriptor(HidKeyboardMap.Descriptor);
 Check(descriptor.SupportsImeOn && descriptor.InputBits == 64, "actual app descriptor accepts LANG1 and retains eight-byte input reports");
 
 var destination = new SendTarget("selected-host", 5);
-foreach (var text in new[] { "A\nB", "A\rB", "A\tB", "e\u0301", "A\u200BB", "\uE000", char.ConvertFromUtf32(0x20BB7), new string('A', 2001), "" })
+foreach (var text in new[] { "A\nB", "A\rB", "A\tB", "e\u0301", "A\u200BB", "\uE000", char.ConvertFromUtf32(0x20BB7), new string('A', 5001), "" })
 {
     var transport = new FakeTransport(destination);
     var sender = new StagedSender(transport, NoDelay);
@@ -126,7 +134,7 @@ foreach (var c in "日本")
 Check(legacyReceiver.Output.StartsWith("日672C") && legacyReceiver.TimestampCount == 1
     && legacyReceiver.UnexpectedEnterCount == 1, "receiver model reproduces legacy raw-code, timestamp and Enter failure after mode drift");
 
-foreach (var length in new[] { 100, 1000, 2000 })
+foreach (var length in new[] { 100, 1000, 5000 })
 {
     const string block = "01日本語ABC橋。";
     var longText = string.Concat(Enumerable.Repeat(block, length / block.Length));
@@ -389,12 +397,12 @@ Check(breakSteps.Count == 2 && breakSteps[0].Stroke == new KeyStroke(0, 0x28)
 await RejectAsync(() => { ImeKeyEncoder.EncodeCharacter('\n'); return Task.CompletedTask; },
     "character encoder still rejects controls rather than encoding 000A");
 
-foreach (var invalid in new[] { "日\r\n本\t", "日\n\u000B", "日\n\u2028", "日\n\u2029", "日\n\u0301", "日\n😀", "日\n\0", string.Concat(Enumerable.Repeat("\r\n", 2001)) })
+foreach (var invalid in new[] { "日\r\n本\t", "日\n\u000B", "日\n\u2028", "日\n\u2029", "日\n\u0301", "日\n😀", "日\n\0", new string('日', 5000) + "\r\n", string.Concat(Enumerable.Repeat("\r\n", 5001)) })
 {
     var transport = new FakeTransport(destination);
     await RejectAsync(() => new StagedSender(transport, NoDelay).SendAsync(invalid, destination, allowLineBreaks: true),
-        "unsupported multiline snapshot is rejected before transmission");
-    Check(transport.Frames.Count == 0, "bad character after a valid line break sends no partial prefix");
+        "unsupported or oversized multiline snapshot is rejected before transmission");
+    Check(transport.Frames.Count == 0, "invalid multiline text sends no partial prefix");
 }
 
 foreach (var source in new[] { "日\r\n本", "日\n本", "日\r本", "\r\n", "\n\n", mixedEndings, "日\r\n\r\n本\r\n" })
@@ -421,13 +429,13 @@ foreach (var source in new[] { "日\r\n本", "日\n本", "日\r本", "\r\n", "\n
             "multiline progress counts CRLF once and completes without adding a final newline");
     }
 
-foreach (var limitText in new[] { string.Concat(Enumerable.Repeat("日\r\n", 1000)), string.Concat(Enumerable.Repeat("\r\n", 2000)) })
+foreach (var limitText in new[] { string.Concat(Enumerable.Repeat("日\r\n", 2500)), string.Concat(Enumerable.Repeat("\r\n", 5000)) })
 {
     var receiver = new Receiver(InputMode.Off) { LineEnding = "\r\n", DriftOnCommit = true };
     var queue = new StagedSender(new FakeTransport(destination) { Receive = receiver.Accept }, NoDelay);
     await queue.SendAsync(limitText, destination, allowLineBreaks: true);
-    Check(receiver.Output == limitText && queue.TotalCharacters == 2000 && queue.ProcessedCharacters == 2000,
-        "2000-unit multiline limit includes CRLF pairs without truncating source or adding lines");
+    Check(receiver.Output == limitText && queue.TotalCharacters == 5000 && queue.ProcessedCharacters == 5000,
+        "5000-unit multiline limit includes CRLF pairs without truncating source or adding lines");
 }
 
 foreach (var pauseAfter in new[] { 1, 2, 3 })
@@ -692,11 +700,11 @@ Check(ignoredOffSender.State == SendState.KeysSent && ignoredOffReceiver.Output 
 foreach (var layout in Enum.GetValues<ReceiverKeyboardLayout>())
 {
     var receiver = new AsciiReceiver(layout);
-    var longAscii = string.Concat(Enumerable.Repeat("Aa_@01:/?-", 200));
+    var longAscii = string.Concat(Enumerable.Repeat("Aa_@01:/?-", 500));
     var queue = new StagedSender(new FakeTransport(destination) { Receive = receiver.Accept }, NoDelay);
     await queue.SendAsync(longAscii, destination, options: new(Mode: TextInputMode.Ascii, Layout: layout));
-    Check(longAscii.Length == 2000 && receiver.Output == longAscii && queue.ProcessedCharacters == 2000,
-        "2000-character ASCII snapshot preserves every direct key in either receiver layout");
+    Check(longAscii.Length == 5000 && receiver.Output == longAscii && queue.ProcessedCharacters == 5000,
+        "5000-character ASCII snapshot preserves every direct key in either receiver layout");
 }
 var wrongLayoutReceiver = new AsciiReceiver(jis);
 var wrongLayoutQueue = new StagedSender(new FakeTransport(destination) { Receive = wrongLayoutReceiver.Accept }, NoDelay);
