@@ -20,4 +20,11 @@ $toolchain = Get-Content -LiteralPath (Join-Path $projectRoot 'firmware/xiao-nrf
 $controller = Get-Content -LiteralPath (Join-Path $projectRoot 'firmware/xiao-nrf52840/src/Controller.h') -Raw
 $version = [regex]::Match($controller, '(?m)^#define JBI_FIRMWARE_VERSION "([0-9]\.[0-9]\.[0-9])"').Groups[1].Value
 if (-not $version -or $version -ne $toolchain.firmware -or $toolchain.protocol -ne 1) { throw 'FIRMWARE_VERSION_MISMATCH' }
+# The app and the flashing script each keep an explicit list; the current firmware must be in both.
+function Get-VersionList([string]$Text) { return @([regex]::Matches($Text, '[0-9]\.[0-9]\.[0-9]') | ForEach-Object Value) }
+$client = Get-Content -LiteralPath (Join-Path $projectRoot 'src/JisBleInput.Core/XiaoClient.cs') -Raw
+$supported = Get-VersionList ([regex]::Match($client, 'SupportedFirmware\s*=\s*\[([^\]]+)\]').Groups[1].Value)
+$flash = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'Flash-Firmware.ps1') -Raw
+$flashable = Get-VersionList ([regex]::Match($flash, "Firmware -notin ([^)]+?) -or").Groups[1].Value)
+if ($version -notin $supported -or $version -notin $flashable) { throw 'FIRMWARE_SUPPORT_LIST_MISMATCH' }
 Write-Output "HID contract: PASS ($($canonical.Length) bytes, $([Convert]::ToHexString($fwHash)))"

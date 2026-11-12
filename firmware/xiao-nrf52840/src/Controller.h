@@ -1,7 +1,7 @@
 #pragma once
 #include "Protocol.h"
 
-#define JBI_FIRMWARE_VERSION "0.1.1"
+#define JBI_FIRMWARE_VERSION "0.1.2"
 
 namespace jbi {
 class Backend {

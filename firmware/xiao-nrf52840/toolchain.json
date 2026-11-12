@@ -1,5 +1,5 @@
 {
-    "firmware": "0.1.1",
+    "firmware": "0.1.2",
     "protocol": 1,
     "fqbn": "Seeeduino:nrf52:xiaonRF52840Sense:softdevice=s140v6,debug=l0",
     "core": {

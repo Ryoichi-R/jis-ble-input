@@ -166,7 +166,7 @@ public sealed class StagedSender(IReportTransport transport, Func<int, Cancellat
         lock (sync) { if (!pauseRequested) return false; }
         // A pause starts only between complete character sequences, never between
         // code entry and IME commit. Do not leave a modifier held while waiting.
-        await transport.WriteAsync(new byte[8], destination, ioCancellation);
+        await transport.WriteAsync(new byte[8], destination, ioCancellation).ConfigureAwait(false);
         TaskCompletionSource signal;
         lock (sync)
         {
@@ -177,7 +177,7 @@ public sealed class StagedSender(IReportTransport transport, Func<int, Cancellat
             State = SendState.Paused;
         }
         StateChanged?.Invoke(SendState.Paused);
-        await signal.Task.WaitAsync(cancellation);
+        await signal.Task.WaitAsync(cancellation).ConfigureAwait(false);
         cancellation.ThrowIfCancellationRequested();
         if (!transport.IsReady(destination)) throw new InvalidOperationException("一時停止後に接続が変わりました。");
         return true;
@@ -190,8 +190,8 @@ public sealed class StagedSender(IReportTransport transport, Func<int, Cancellat
         {
             cancellation.ThrowIfCancellationRequested();
             if (!transport.IsReady(destination)) throw new InvalidOperationException("接続先またはCapsLockの状態が変わりました。");
-            await transport.WriteAsync(step.Stroke.ToReport(), destination, ioCancellation);
-            await wait(step.DelayMilliseconds, cancellation);
+            await transport.WriteAsync(step.Stroke.ToReport(), destination, ioCancellation).ConfigureAwait(false);
+            await wait(step.DelayMilliseconds, cancellation).ConfigureAwait(false);
         }
     }
 
@@ -204,19 +204,19 @@ public sealed class StagedSender(IReportTransport transport, Func<int, Cancellat
             {
                 // Optional setup changes IME mode only: no text, F5 or Enter.
                 await WriteStepsAsync(options.Mode == TextInputMode.Ascii ? AsciiKeyEncoder.EncodePreparation()
-                    : ImeKeyEncoder.EncodePreparation(options.Speed), destination, cancellation, ioCancellation);
+                    : ImeKeyEncoder.EncodePreparation(options.Speed), destination, cancellation, ioCancellation).ConfigureAwait(false);
             }
             else
             {
                 for (var index = 0; index < snapshot.UnitCount; index++)
                 {
-                    var resumed = await WaitIfPausedAsync(destination, cancellation, ioCancellation);
+                    var resumed = await WaitIfPausedAsync(destination, cancellation, ioCancellation).ConfigureAwait(false);
                     if (options.Mode == TextInputMode.Ascii && (index == 0 || resumed))
-                        await WriteStepsAsync(AsciiKeyEncoder.EncodePreparation(), destination, cancellation, ioCancellation);
+                        await WriteStepsAsync(AsciiKeyEncoder.EncodePreparation(), destination, cancellation, ioCancellation).ConfigureAwait(false);
                     var unit = snapshot.Units[index];
                     await WriteStepsAsync(unit.IsLineBreak ? ImeKeyEncoder.EncodeLineBreak()
                         : options.Mode == TextInputMode.Ascii ? AsciiKeyEncoder.EncodeCharacter(unit.Character, options.Layout, options.DirectSpeed)
-                        : ImeKeyEncoder.EncodeCharacter(unit.Character, options.Speed), destination, cancellation, ioCancellation);
+                        : ImeKeyEncoder.EncodeCharacter(unit.Character, options.Speed), destination, cancellation, ioCancellation).ConfigureAwait(false);
                     cancellation.ThrowIfCancellationRequested();
                     lock (sync) ProcessedCharacters = index + 1;
                     Progress?.Invoke(ProcessedCharacters, snapshot.UnitCount);
@@ -244,7 +244,7 @@ public sealed class StagedSender(IReportTransport transport, Func<int, Cancellat
             using var releaseTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
             try
             {
-                await transport.WriteAsync(new byte[8], destination, releaseTimeout.Token);
+                await transport.WriteAsync(new byte[8], destination, releaseTimeout.Token).ConfigureAwait(false);
                 ReleaseReportSent = true;
             }
             catch { /* A local send cannot prove release on the remote PC. */ }

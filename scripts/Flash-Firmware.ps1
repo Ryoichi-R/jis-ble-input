@@ -15,7 +15,7 @@ if (-not $BuildPath) { $BuildPath = Join-Path $cache 'build' }
 $BuildPath = [IO.Path]::GetFullPath($BuildPath)
 if (-not $BuildPath.StartsWith($workspaceRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) { throw 'Build must be inside workspace.' }
 $receipt = Get-Content -LiteralPath (Join-Path $BuildPath 'receipt.json') -Raw | ConvertFrom-Json
-if ($receipt.Status -ne 'Compiled' -or $receipt.Protocol -ne 1 -or $receipt.Firmware -notin '0.1.0', '0.1.1' -or $receipt.Core -ne 'Seeeduino:nrf52@1.1.13') { throw 'UNSUPPORTED_FIRMWARE_RECEIPT' }
+if ($receipt.Status -ne 'Compiled' -or $receipt.Protocol -ne 1 -or $receipt.Firmware -notin '0.1.0', '0.1.1', '0.1.2' -or $receipt.Core -ne 'Seeeduino:nrf52@1.1.13') { throw 'UNSUPPORTED_FIRMWARE_RECEIPT' }
 foreach ($name in @('xiao-nrf52840.ino.zip', 'xiao-nrf52840.ino.hex', 'xiao-nrf52840.ino.uf2')) {
     $entry = @($receipt.Files | Where-Object Name -EQ $name)
     if ($entry.Count -ne 1 -or (Get-FileHash -LiteralPath (Join-Path $BuildPath $name)).Hash -ne $entry[0].Sha256) { throw "FIRMWARE_HASH_MISMATCH: $name" }

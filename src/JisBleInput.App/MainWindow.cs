@@ -31,6 +31,11 @@ internal sealed class MainWindow : Window
     private bool updatingTransport;
     private bool preparingTransfer;
     private bool stoppingByUser;
+    // Board of the last successful XIAO USB link; null means no automatic USB reconnection.
+    private string? xiaoLinkBoard;
+    // Destination the user chose in this run; restored after a brief link drop.
+    private string? sessionPeerId;
+    internal Func<IReadOnlyList<XiaoUsbPort>> DiscoverPorts { get; set; } = XiaoUsbPort.Discover;
     private ConnectionPreferences connectionPreferences = new();
     private readonly CancellationTokenSource lifetime = new();
     private readonly TextBox editor = new()
@@ -339,6 +344,7 @@ internal sealed class MainWindow : Window
                 if (bluetooth.UsesLocalBluetooth) _ = bluetooth.RefreshHostsAsync();
                 else if (!working) _ = RefreshConnectionsAsync();
             }
+            if (refreshTicks % 6 == 3) _ = TryReconnectXiaoAsync();
         };
         TextCompositionManager.AddPreviewTextInputStartHandler(editor, (_, _) => { composition = true; UpdateButtons(); });
         TextCompositionManager.AddPreviewTextInputHandler(editor, (_, args) =>
@@ -352,6 +358,7 @@ internal sealed class MainWindow : Window
             bluetooth.Select(hosts.SelectedValue as string);
             if (hosts.SelectedValue is string id && bluetooth.Hosts.Any(host => host.Id == id))
             {
+                sessionPeerId = id;
                 if (bluetooth.UsesLocalBluetooth)
                 {
                     connectionPreferences = connectionPreferences with { PeerHash = ConnectionPreferences.HashPeer(id) };
@@ -365,6 +372,7 @@ internal sealed class MainWindow : Window
             }
             UpdateButtons();
         };
+        autoReconnect.ToolTip = "XIAO方式では、USB通信が切れたときの自動再接続にも使います。";
         autoReconnect.Checked += (_, _) => SetAutoReconnect(true);
         autoReconnect.Unchecked += (_, _) => SetAutoReconnect(false);
         connectionMethod.SelectionChanged += async (_, _) => { if (!updatingTransport) await ChangeConnectionMethodAsync(); };
@@ -387,7 +395,7 @@ internal sealed class MainWindow : Window
             if (working || bluetooth is not XiaoSerialKeyboard xiao || !xiao.IsStarted) return;
             if (MessageBox.Show(this, "選択中のXIAO基板に保存されたPC登録1件を解除します。相手PCでもこの基板の登録を削除してから再登録してください。", "基板の登録解除", MessageBoxButton.OKCancel) != MessageBoxResult.OK) return;
             working = true; starting = true; UpdateButtons();
-            try { operation = xiao.ClearBondAsync(lifetime.Token); await operation; }
+            try { operation = xiao.ClearBondAsync(lifetime.Token); await operation; sessionPeerId = null; }
             catch (Exception error) { message.Text = error.Message; }
             finally { working = false; starting = false; operation = null; UpdateConnection(); }
         };
@@ -471,7 +479,7 @@ internal sealed class MainWindow : Window
         updatingTransport = true;
         try
         {
-            var ports = XiaoUsbPort.Discover();
+            var ports = DiscoverPorts();
             usbPorts.ItemsSource = ports;
             var remembered = ports.FirstOrDefault(port => port.Connectable && port.Hash == transportPreferences.BoardHash);
             usbPorts.SelectedItem = remembered;
@@ -517,6 +525,8 @@ internal sealed class MainWindow : Window
                     throw new InvalidOperationException("Bluetoothの終了・復帰が未確認です。Windows設定で確認してから再試行してください。");
             }
             bluetooth.Dispose();
+            xiaoLinkBoard = null;
+            sessionPeerId = null;
             bluetooth = nextMethod == ConnectionMethod.XiaoUsb ? new XiaoSerialKeyboard() : new LocalBleConnection();
             AttachConnectionEvents();
             transportPreferences = transportPreferences with { Method = nextMethod };
@@ -675,7 +685,9 @@ internal sealed class MainWindow : Window
         }
     }
 
-    private async Task StartBluetoothAsync(bool newPairing)
+    internal Task StartConnectionAsync(bool newPairing) => StartBluetoothAsync(newPairing);
+
+    private async Task StartBluetoothAsync(bool newPairing, bool automatic = false)
     {
         if (closing || working) return;
         attemptedStart = true;
@@ -697,6 +709,8 @@ internal sealed class MainWindow : Window
                 ? "広告要求は開始しましたが、一部の広告データが省略されています。PC接続の成立は接続先一覧で確認してください。"
                 : newPairing ? "新しいPCのペアリングを受け付けています。受信PCのBluetooth設定から追加してください。"
                 : "広告を開始し、PCからの接続を待っています。前回のPCの接続・購読が戻ると送信先を復帰します。";
+            if (bluetooth is XiaoSerialKeyboard { IsStarted: true } linked) xiaoLinkBoard = linked.Port?.Hash;
+            if (automatic) connection.Text = "XIAOに自動で再接続しました。受信側のキー状態を確認してから送信してください。";
             await bluetooth.RefreshHostsAsync();
         }
         catch (OperationCanceledException)
@@ -705,7 +719,15 @@ internal sealed class MainWindow : Window
         }
         catch (Exception error)
         {
-            if (!closing)
+            // Keep the message that explained the original failure; retry only transient USB errors.
+            if (automatic)
+            {
+                if (error is not (IOException or TimeoutException or UnauthorizedAccessException)) xiaoLinkBoard = null;
+                if (!closing) connection.Text = xiaoLinkBoard is null
+                    ? $"XIAOへ自動で再接続できませんでした。{error.Message}"
+                    : "XIAOへの自動再接続を数秒おきに試しています。";
+            }
+            else if (!closing)
             {
                 connection.Text = "接続待ちを開始できませんでした。「再接続」を押せます。";
                 startupDetails.Text = $"接続診断: {error.Message}";
@@ -719,6 +741,26 @@ internal sealed class MainWindow : Window
             working = false;
             UpdateConnection();
         }
+    }
+
+    // After a USB fault the session is gone; HELLO starts a new one and discards any earlier ARM.
+    internal async Task TryReconnectXiaoAsync()
+    {
+        if (closing || working || xiaoLinkBoard is null || !connectionPreferences.AutoReconnect
+            || bluetooth is not XiaoSerialKeyboard xiao || xiao.IsStarted) return;
+        XiaoUsbPort? port;
+        try
+        {
+            var ports = DiscoverPorts();
+            port = ports.FirstOrDefault(candidate => candidate.Connectable && candidate.Hash == xiaoLinkBoard);
+            if (port is null) return;
+            updatingTransport = true;
+            try { usbPorts.ItemsSource = ports; usbPorts.SelectedItem = port; }
+            finally { updatingTransport = false; }
+        }
+        catch (Exception) { return; }
+        xiao.Port = port;
+        await StartBluetoothAsync(newPairing: false, automatic: true);
     }
 
     private Task SendAsync(bool prepareOnly)
@@ -854,7 +896,8 @@ internal sealed class MainWindow : Window
         {
             var remembered = (bluetooth.UsesLocalBluetooth ? connectionPreferences
                 : new ConnectionPreferences(AutoReconnect: connectionPreferences.AutoReconnect, PeerHash: transportPreferences.PeerHash))
-                .FindRememberedPeer(bluetooth.Hosts.Select(host => host.Id));
+                .FindRememberedPeer(bluetooth.Hosts.Select(host => host.Id))
+                ?? bluetooth.Hosts.FirstOrDefault(host => host.Id == sessionPeerId)?.Id;
             if (remembered is not null)
             {
                 bluetooth.Select(remembered);

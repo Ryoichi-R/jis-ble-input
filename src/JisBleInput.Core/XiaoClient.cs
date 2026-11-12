@@ -16,6 +16,9 @@ public sealed class XiaoRequestTimeoutException(bool requestStarted, Exception i
 public sealed record XiaoStatus(byte Flags, byte Mode, byte[] BoardId, byte[] PeerId, byte[] DescriptorHash, string Firmware)
 {
     public const int Length = 57;
+    // Firmware versions this app has been verified against. Test-XiaoContract.ps1 requires the current firmware here.
+    public static readonly IReadOnlyList<string> SupportedFirmware = ["0.1.0", "0.1.1", "0.1.2"];
+    public bool FirmwareSupported => SupportedFirmware.Contains(Firmware);
     public bool Ready => (Flags & 15) == 7;
     public bool? CapsLock => (Flags & 16) == 0 ? null : (Flags & 32) != 0;
     public bool Bonded => (Flags & 64) != 0;

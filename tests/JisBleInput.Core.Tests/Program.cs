@@ -1190,6 +1190,19 @@ catch (IOException) { }
 await radioSwitch.TurnOnAsync();
 Check(radioPort.IsOn && radioPort.OnRequests == 1, "a completed off failure does not permanently block restoration");
 
+// A stalled UI thread must not delay a key release: the worker may not resume
+// on the caller's SynchronizationContext between key-down and key-up.
+var uiContext = new CountingSynchronizationContext();
+var previousContext = SynchronizationContext.Current;
+SynchronizationContext.SetSynchronizationContext(uiContext);
+var offThreadTransport = new AsyncTransport(destination);
+Task offThreadTransfer;
+try { offThreadTransfer = new StagedSender(offThreadTransport).SendAsync("AB", destination, options: new SendOptions(TextInputMode.Ascii)); }
+finally { SynchronizationContext.SetSynchronizationContext(previousContext); }
+await offThreadTransfer.ConfigureAwait(false);
+Check(offThreadTransport.Frames > 4 && uiContext.Posts == 0,
+    "key steps continue without the caller's synchronization context");
+
 await XiaoChecks.RunAsync(Check);
 Console.WriteLine($"Passed: {passed}");
 
@@ -1443,4 +1456,25 @@ internal sealed class ManualClock : TimeProvider
     public override long TimestampFrequency => TimeSpan.TicksPerSecond;
     public override long GetTimestamp() => Interlocked.Read(ref ticks);
     public void Advance(TimeSpan value) => Interlocked.Add(ref ticks, value.Ticks);
+}
+
+internal sealed class CountingSynchronizationContext : SynchronizationContext
+{
+    private int posts;
+    public int Posts => Volatile.Read(ref posts);
+    public override void Post(SendOrPostCallback callback, object? state)
+    {
+        Interlocked.Increment(ref posts);
+        ThreadPool.QueueUserWorkItem(_ => callback(state));
+    }
+}
+
+// Completes every write on another thread, like the real USB and GATT transports.
+internal sealed class AsyncTransport(SendTarget target) : IReportTransport
+{
+    private int frames;
+    public int Frames => Volatile.Read(ref frames);
+    public bool IsReady(SendTarget destination) => destination == target;
+    public Task WriteAsync(byte[] report, SendTarget destination, CancellationToken cancellation) =>
+        Task.Run(() => { Interlocked.Increment(ref frames); }, cancellation);
 }

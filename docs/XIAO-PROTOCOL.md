@@ -1,6 +1,6 @@
-# XIAO USB protocol 1 / firmware 0.1.0・0.1.1
+# XIAO USB protocol 1 / firmware 0.1.0・0.1.1・0.1.2
 
-対象はXIAO nRF52840 Senseとアプリ1.14.0。HMACは利用者の選択により採用しない。USBを開ける送信PCのプロセスを信頼する。CRC・session・USBシリアル番号は送信元認証ではない。
+対象はXIAO nRF52840 Senseとアプリ1.15.0。HMACは利用者の選択により採用しない。USBを開ける送信PCのプロセスを信頼する。CRC・session・USBシリアル番号は送信元認証ではない。
 
 ## 接続とフレーム
 
@@ -39,6 +39,7 @@ HELLOの後はsequence1から全要求（PINGを含む）を単一writerで採�
 
 result: 0成功、1不正形式、2session不一致、3sequence不一致、4世代不一致、5NotReady、6NotArmed、7Busy、8通知失敗、9拒否。成功ACKはSoftDeviceの通知投入成功を示す。無線到達、相手のキー状態、文字・IME変換・本文一致の確認ではない。
 FW 0.1.1のCLEAR_BONDでは、登録ファイルを削除できなければ結果10（StorageFailed）を返す。登録状態を残して手動の再試行を可能にする。
+FW 0.1.2は、登録を保存する前に既存の登録ファイルを削除する。USBのフレームと応答は0.1.1と同じ。
 
 アプリ要求timeoutは1秒、BLE通知の空き待ちは500ms。USB/DTR断または正当な通信の途絶1,500msでARMを失効し解放する。DISARM/中断RELEASEで以前の非ゼロjobを破棄し、ゼロ投入成功後に停止完了ACKを返す。待機中もPINGを処理する。純粋状態機械は単一Arduino loopが所有し、BLEコールバックはハードウェア状態を渡す。BLE通知は非ブロッキングの`sd_ble_gatts_hvx`をこのloopだけから呼ぶ。
 アプリの「停止」は新しい入力要求を止め、進行中の要求には通常の応答期限を適用する。応答を受けてからRELEASE・DISARMへ進み、応答途絶時はUSBを閉じる。
@@ -53,7 +54,7 @@ FW 0.1.1のCLEAR_BONDでは、登録ファイルを削除できなければ結�
 | 6      | 8    | USBシリアル番号と一致する基板ID                                                               |
 | 14     | 8    | BLE identity address6バイト＋address type1バイト＋0（認証情報ではない）                       |
 | 22     | 32   | descriptor SHA-256                                                                            |
-| 54     | 3    | firmware major / minor / patch = 0 / 1 / 0                                                    |
+| 54     | 3    | 稼働FWの major / minor / patch（0.1.2なら 0 / 1 / 2）                                                    |
 
 Readyはflags低4bitが7。登録済み・暗号化された相手1台だけで暗号化flagを立てる。CapsLockオンは非ゼロ送信とARMを禁止し、解放は許可する。未取得は画面で手動確認を求める。接続・暗号化・購読・suspend・Protocol Mode・peer変化でgenerationを更新し、旧ARMを失効する。
 

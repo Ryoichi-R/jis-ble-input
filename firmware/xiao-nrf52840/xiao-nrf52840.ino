@@ -214,8 +214,10 @@ static void saveRegistration() {
     taskENTER_CRITICAL();
     registeredPeer = peer;
     taskEXIT_CRITICAL();
+    // FILE_O_WRITE appends. A leftover file of another size would make the peer unreadable after a reboot.
+    bool cleared = !InternalFS.exists(kPeerFile) || InternalFS.remove(kPeerFile);
     File file(InternalFS);
-    bool saved = file.open(kPeerFile, FILE_O_WRITE) && file.write(reinterpret_cast<const uint8_t *>(&registeredPeer), sizeof(registeredPeer)) == sizeof(registeredPeer);
+    bool saved = cleared && file.open(kPeerFile, FILE_O_WRITE) && file.write(reinterpret_cast<const uint8_t *>(&registeredPeer), sizeof(registeredPeer)) == sizeof(registeredPeer);
     file.close();
     registered = saved;
     if (!saved) {

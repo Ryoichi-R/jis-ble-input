@@ -96,7 +96,7 @@ internal sealed class XiaoSerialKeyboard : IKeyboardConnection
                 await next.StartAsync(cancellation);
                 var state = next.Current!;
                 if (!string.Equals(state.Board, device.Serial, StringComparison.OrdinalIgnoreCase)
-                    || state.Firmware is not ("0.1.0" or "0.1.1") || !state.DescriptorHash.SequenceEqual(SHA256.HashData(HidKeyboardMap.Descriptor)))
+                    || !state.FirmwareSupported || !state.DescriptorHash.SequenceEqual(SHA256.HashData(HidKeyboardMap.Descriptor)))
                     throw new InvalidDataException("基板識別・FW版・キー定義が対応していません。送信を開始しません。");
                 lock (sync) { started = true; generation++; }
             }
