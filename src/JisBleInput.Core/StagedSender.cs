@@ -14,8 +14,8 @@ public sealed record TransferProgress(int ProcessedCharacters, int TotalCharacte
 public sealed class StagedSender(IReportTransport transport, Func<int, CancellationToken, Task>? delay = null,
     TimeProvider? timeProvider = null)
 {
+    private static readonly KeyStep MacInputShortcut = new(new KeyStroke(0, 0x6D), 60);
     private readonly object sync = new();
-    private readonly Func<int, CancellationToken, Task> wait = delay ?? ((ms, token) => Task.Delay(ms, token));
     private readonly TimeProvider clock = timeProvider ?? TimeProvider.System;
     private CancellationTokenSource? stop;
     private CancellationTokenSource? stopScheduling;
@@ -50,7 +50,11 @@ public sealed class StagedSender(IReportTransport transport, Func<int, Cancellat
     {
         var selected = options ?? new SendOptions();
         selected.Validate();
-        return Start(null, destination, selected, cancellation);
+        if (selected.Mode == TextInputMode.Japanese && selected.JapaneseInput == JapaneseInputMethod.MacUnicodeHex)
+            throw new ArgumentException("Mac側でUnicode Hex Inputを選んでください。");
+        var steps = selected.Mode == TextInputMode.Ascii ? AsciiKeyEncoder.EncodePreparation()
+            : ImeKeyEncoder.EncodePreparation(selected.Speed);
+        return Start(null, destination, selected, cancellation, steps);
     }
 
     public Task SendAsync(string text, SendTarget destination, bool allowLineBreaks = false, SendOptions? options = null)
@@ -71,7 +75,8 @@ public sealed class StagedSender(IReportTransport transport, Func<int, Cancellat
         return Start(snapshot, destination, options, cancellation);
     }
 
-    private Task Start(TextSnapshot? snapshot, SendTarget destination, SendOptions options, CancellationToken externalCancellation)
+    private Task Start(TextSnapshot? snapshot, SendTarget destination, SendOptions options, CancellationToken externalCancellation,
+        IReadOnlyList<KeyStep>? preparation = null)
     {
         externalCancellation.ThrowIfCancellationRequested();
         CancellationToken cancellation, ioCancellation;
@@ -99,7 +104,7 @@ public sealed class StagedSender(IReportTransport transport, Func<int, Cancellat
         }
         StateChanged?.Invoke(state);
         // Exactly one worker owns the snapshot, destination generation and queue.
-        return RunAsync(snapshot, destination, options, cancellation, ioCancellation);
+        return RunAsync(snapshot, destination, options, preparation, cancellation, ioCancellation);
     }
 
     public bool RequestPause()
@@ -184,30 +189,40 @@ public sealed class StagedSender(IReportTransport transport, Func<int, Cancellat
     }
 
     private async Task WriteStepsAsync(IReadOnlyList<KeyStep> steps, SendTarget destination,
-        CancellationToken cancellation, CancellationToken ioCancellation)
+        CancellationToken cancellation, CancellationToken ioCancellation, WindowsHighResolutionTimer? timer = null)
     {
         foreach (var step in steps)
         {
             cancellation.ThrowIfCancellationRequested();
             if (!transport.IsReady(destination)) throw new InvalidOperationException("接続先またはCapsLockの状態が変わりました。");
             await transport.WriteAsync(step.Stroke.ToReport(), destination, ioCancellation).ConfigureAwait(false);
-            await wait(step.DelayMilliseconds, cancellation).ConfigureAwait(false);
+            var milliseconds = step.DelayMilliseconds;
+            await (timer is not null ? timer.DelayAsync(milliseconds, cancellation)
+                : delay?.Invoke(milliseconds, cancellation) ?? Task.Delay(milliseconds, cancellation)).ConfigureAwait(false);
         }
     }
 
-    private async Task RunAsync(TextSnapshot? snapshot, SendTarget destination, SendOptions options,
+    private async Task RunAsync(TextSnapshot? snapshot, SendTarget destination, SendOptions options, IReadOnlyList<KeyStep>? preparation,
         CancellationToken cancellation, CancellationToken ioCancellation)
     {
         try
         {
             if (snapshot is null)
             {
-                // Optional setup changes IME mode only: no text, F5 or Enter.
-                await WriteStepsAsync(options.Mode == TextInputMode.Ascii ? AsciiKeyEncoder.EncodePreparation()
-                    : ImeKeyEncoder.EncodePreparation(options.Speed), destination, cancellation, ioCancellation).ConfigureAwait(false);
+                await WriteStepsAsync(preparation!, destination, cancellation, ioCancellation).ConfigureAwait(false);
             }
             else
             {
+                var useMacUnicodeHex = options.Mode == TextInputMode.Japanese
+                    && options.JapaneseInput == JapaneseInputMethod.MacUnicodeHex;
+                using var trialTimer = delay is null && options.Speed == JapaneseSpeed.MacUnicodeHexHighSpeedTrial
+                    ? new WindowsHighResolutionTimer() : null;
+                if (useMacUnicodeHex)
+                {
+                    // Release any held keys, tap F18, then let the receiver switch input sources.
+                    await WriteStepsAsync([new(default, 120), MacInputShortcut, new(default, 500)],
+                        destination, cancellation, ioCancellation).ConfigureAwait(false);
+                }
                 for (var index = 0; index < snapshot.UnitCount; index++)
                 {
                     var resumed = await WaitIfPausedAsync(destination, cancellation, ioCancellation).ConfigureAwait(false);
@@ -216,7 +231,10 @@ public sealed class StagedSender(IReportTransport transport, Func<int, Cancellat
                     var unit = snapshot.Units[index];
                     await WriteStepsAsync(unit.IsLineBreak ? ImeKeyEncoder.EncodeLineBreak()
                         : options.Mode == TextInputMode.Ascii ? AsciiKeyEncoder.EncodeCharacter(unit.Character, options.Layout, options.DirectSpeed)
-                        : ImeKeyEncoder.EncodeCharacter(unit.Character, options.Speed), destination, cancellation, ioCancellation).ConfigureAwait(false);
+                        : useMacUnicodeHex
+                            ? ImeKeyEncoder.EncodeMacUnicodeHex(unit.Character, options.Speed)
+                            : ImeKeyEncoder.EncodeCharacter(unit.Character, options.Speed),
+                        destination, cancellation, ioCancellation, unit.IsLineBreak ? null : trialTimer).ConfigureAwait(false);
                     cancellation.ThrowIfCancellationRequested();
                     lock (sync) ProcessedCharacters = index + 1;
                     Progress?.Invoke(ProcessedCharacters, snapshot.UnitCount);

@@ -43,13 +43,36 @@ internal static class XiaoConnectionChecks
             && io.Commands.Skip(stopStart).Where(command => command != XiaoCommand.Ping)
                 .SequenceEqual(new[] { XiaoCommand.Arm, XiaoCommand.Report, XiaoCommand.Release, XiaoCommand.Disarm }),
             "XIAO stop sends release and disarm after the pending ACK and keeps the connection");
+        await StateChangeStopChecksAsync(check);
+        using (var notReady = new ChannelFake { RejectArm = true })
+        {
+            var keyboard = new XiaoSerialKeyboard(_ => notReady) { Port = new("COM999", "0011223344556677") };
+            var directory = System.IO.Path.Combine(System.IO.Directory.GetCurrentDirectory(), "_internal", "build-cache",
+                "test-data", "xiao-arm-not-ready", Guid.NewGuid().ToString("N"));
+            var window = new MainWindow(System.Runtime.InteropServices.Architecture.Arm64, false, directory, keyboardConnection: keyboard);
+            try
+            {
+                await window.StartConnectionAsync(false);
+                keyboard.Select(keyboard.Hosts.Single().Id);
+                await window.SendToAsync(keyboard.Target!).WaitAsync(TimeSpan.FromSeconds(4));
+                var commands = notReady.Commands.Where(command => command is XiaoCommand.Arm or XiaoCommand.Report
+                    or XiaoCommand.Release or XiaoCommand.Disarm);
+                check(keyboard.IsStarted && !notReady.Disposed && commands.SequenceEqual(new[] { XiaoCommand.Arm, XiaoCommand.Disarm }),
+                    "ARM NotReady preserves USB, disarms if the target is still valid, and sends no text");
+            }
+            finally
+            {
+                window.PrepareForSessionEnd();
+                window.Close();
+            }
+        }
         foreach (var duringReport in new[] { false, true })
         {
             using var timedOut = new ChannelFake { HoldReport = duringReport, DropArm = !duringReport };
             var timeoutKeyboard = new XiaoSerialKeyboard(_ => timedOut) { Port = new("COM999", "0011223344556677") };
             var directory = System.IO.Path.Combine(System.IO.Directory.GetCurrentDirectory(), "_internal", "build-cache",
                 "test-data", "xiao-timeout", Guid.NewGuid().ToString("N"));
-            var window = new MainWindow(false, directory, keyboardConnection: timeoutKeyboard);
+            var window = new MainWindow(System.Runtime.InteropServices.Architecture.Arm64, false, directory, keyboardConnection: timeoutKeyboard);
             try
             {
                 await timeoutKeyboard.StartAsync(false, CancellationToken.None);
@@ -95,7 +118,8 @@ internal static class XiaoConnectionChecks
             try { await updated.ClearBondAsync(CancellationToken.None); check(false, "storage failure must not report success"); }
             catch (System.IO.IOException error)
             {
-                check(error.Message.Contains("登録ファイルを削除できません") && failedStorage.Commands.Count(command => command == XiaoCommand.ClearBond) == 1,
+                check(error.Message.Contains("登録ファイルを削除できません") && updated.IsStarted && !failedStorage.Disposed
+                    && failedStorage.Commands.Count(command => command == XiaoCommand.ClearBond) == 1,
                     "storage failure is presented to the caller without automatic retries");
             }
         }
@@ -147,6 +171,46 @@ internal static class XiaoConnectionChecks
         return condition();
     }
 
+    private static async Task StateChangeStopChecksAsync(Action<bool, string> check)
+    {
+        foreach (var disconnect in new[] { false, true })
+        {
+            using var channel = new ChannelFake { HoldReport = true };
+            var keyboard = new XiaoSerialKeyboard(_ => channel) { Port = new("COM999", "0011223344556677") };
+            var directory = System.IO.Path.Combine(System.IO.Directory.GetCurrentDirectory(), "_internal", "build-cache",
+                "test-data", "xiao-state-stop", Guid.NewGuid().ToString("N"));
+            var window = new MainWindow(System.Runtime.InteropServices.Architecture.Arm64, false, directory, keyboardConnection: keyboard);
+            try
+            {
+                await window.StartConnectionAsync(false);
+                keyboard.Select(keyboard.Hosts.Single().Id);
+                var message = ((Grid)window.Content).Children.OfType<StackPanel>()
+                    .SelectMany(panel => panel.Children.OfType<TextBlock>()).Single(label => label.Name == "TransferMessage");
+                var sending = window.SendToAsync(keyboard.Target!);
+                await channel.ReportWritten.Task.WaitAsync(TimeSpan.FromSeconds(1));
+                await channel.ChangeAsync(disconnect ? 6u : 5u, disconnect ? (byte)(1 | 64) : (byte)(7 | 16 | 32 | 64));
+                check(await UntilAsync(() => message.Text.Contains("接続先またはキー状態が変わりました"))
+                    && !sending.IsCompleted && !channel.Disposed,
+                    "XIAO state changes stop scheduling without cancelling an outstanding report");
+                channel.AcknowledgeReport(XiaoResult.Rejected);
+                await sending.WaitAsync(TimeSpan.FromSeconds(4));
+                var commands = channel.Commands.Where(command => command is XiaoCommand.Arm or XiaoCommand.Report
+                    or XiaoCommand.Release or XiaoCommand.Disarm);
+                var expected = disconnect ? new[] { XiaoCommand.Arm, XiaoCommand.Report }
+                    : new[] { XiaoCommand.Arm, XiaoCommand.Report, XiaoCommand.Release, XiaoCommand.Disarm };
+                check(keyboard.IsStarted && !channel.Disposed && commands.SequenceEqual(expected),
+                    disconnect ? "BLE generation change preserves USB without writing to a stale destination"
+                        : "CapsLock change preserves USB and releases and disarms the captured recipient");
+                await keyboard.RefreshHostsAsync();
+            }
+            finally
+            {
+                window.PrepareForSessionEnd();
+                window.Close();
+            }
+        }
+    }
+
     private static async Task ReconnectChecksAsync(Action<bool, string> check)
     {
         var board = new XiaoUsbPort("COM999", "0011223344556677");
@@ -164,10 +228,18 @@ internal static class XiaoConnectionChecks
                 channels.Add(channel);
                 return channel;
             }) { Port = board };
-            var window = new MainWindow(false, directory, keyboardConnection: keyboard) { DiscoverPorts = () => [board] };
+            var window = new MainWindow(System.Runtime.InteropServices.Architecture.Arm64, false, directory, keyboardConnection: keyboard) { DiscoverPorts = () => [board] };
             try
             {
-                await window.StartConnectionAsync(false);
+                await window.StartConnectionAsync(newPairing: !optOut);
+                if (!optOut)
+                {
+                    var message = ((Grid)window.Content).Children.OfType<StackPanel>()
+                        .SelectMany(panel => panel.Children.OfType<TextBlock>()).Single(label => label.Name == "TransferMessage");
+                    check(keyboard.IsStarted && message.Text.Contains("USB接続済み") && message.Text.Contains("登録済み")
+                        && !channels[0].Commands.Contains(XiaoCommand.PairingOpen),
+                        "adding a PC on a bonded XIAO reports the existing USB link and keeps it available for reconnection");
+                }
                 var hosts = ((Grid)window.Content).Children.OfType<Grid>().SelectMany(grid => grid.Children.OfType<ComboBox>())
                     .Single(box => box.Name == "Hosts");
                 await UntilAsync(() => hosts.Items.Count == 1);
@@ -225,6 +297,7 @@ internal static class XiaoConnectionChecks
         public bool FailClear { get; init; }
         public bool HoldReport { get; set; }
         public bool DropArm { get; init; }
+        public bool RejectArm { get; init; }
         public TaskCompletionSource ReportWritten { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public bool Disposed { get; private set; }
         public List<XiaoCommand> Commands { get; } = [];
@@ -248,8 +321,12 @@ internal static class XiaoConnectionChecks
             var request = XiaoProtocol.Decode(buffer.AsSpan(0, buffer.Length - 1)); session = request.Session;
             Commands.Add((XiaoCommand)request.Command);
             if (DropArm && request.Command == (byte)XiaoCommand.Arm) return Task.CompletedTask;
-            var response = FailClear && request.Command == (byte)XiaoCommand.ClearBond
-                ? new[] { (byte)XiaoResult.StorageFailed } : new byte[] { 0 }.Concat(State()).ToArray();
+            var response = (XiaoCommand)request.Command switch
+            {
+                XiaoCommand.Arm when RejectArm => [(byte)XiaoResult.NotReady],
+                XiaoCommand.ClearBond when FailClear => [(byte)XiaoResult.StorageFailed],
+                _ => new byte[] { 0 }.Concat(State()).ToArray()
+            };
             var encoded = XiaoProtocol.Encode(new((byte)(request.Command | 0x80), session, request.Sequence, generation, response));
             if (HoldReport && request.Command == (byte)XiaoCommand.Report)
             {
@@ -259,11 +336,17 @@ internal static class XiaoConnectionChecks
             else input.Writer.TryWrite(encoded);
             return Task.CompletedTask;
         }
-        public void AcknowledgeReport()
+        public void AcknowledgeReport(XiaoResult result = XiaoResult.Success)
         {
             HoldReport = false;
-            input.Writer.TryWrite(heldReply ?? throw new InvalidOperationException("No report is waiting."));
+            var encoded = heldReply ?? throw new InvalidOperationException("No report is waiting.");
             heldReply = null;
+            if (result != XiaoResult.Success)
+            {
+                var response = XiaoProtocol.Decode(encoded.AsSpan(0, encoded.Length - 1));
+                encoded = XiaoProtocol.Encode(response with { Generation = generation, Payload = [(byte)result] });
+            }
+            input.Writer.TryWrite(encoded);
         }
         public Task ChangeAsync(uint nextGeneration, byte nextFlags)
         {

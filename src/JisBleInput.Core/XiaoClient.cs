@@ -76,6 +76,7 @@ public sealed class XiaoClient : IDisposable
         var completion = new TaskCompletionSource<XiaoFrame>(TaskCreationOptions.RunContinuationsAsynchronously);
         var sent = false;
         var registered = false;
+        var keepSession = false;
         try
         {
             await writer.WaitAsync(deadline.Token).ConfigureAwait(false);
@@ -91,10 +92,21 @@ public sealed class XiaoClient : IDisposable
             }
             finally { writer.Release(); }
             var response = await completion.Task.WaitAsync(deadline.Token).ConfigureAwait(false);
-            if (command == XiaoCommand.ClearBond && response.Payload[0] == (byte)XiaoResult.StorageFailed)
-                throw new IOException("XIAOの登録ファイルを削除できませんでした。基板に再接続して登録状態を確認してください。");
-            if (response.Payload[0] != (byte)XiaoResult.Success)
-                throw new IOException($"XIAO操作失敗: {(XiaoResult)response.Payload[0]}。自動再送しません。");
+            var result = (XiaoResult)response.Payload[0];
+            if (result == XiaoResult.Success) return;
+            // Keep the USB link only for command failures that allow cleanup or an explicit retry.
+            keepSession = (command, result) switch
+            {
+                (XiaoCommand.Arm or XiaoCommand.Report or XiaoCommand.Release or XiaoCommand.Disarm, XiaoResult.NotReady) => true,
+                (XiaoCommand.Report, XiaoResult.NotArmed) => true,
+                (XiaoCommand.Arm or XiaoCommand.Report or XiaoCommand.Release or XiaoCommand.Disarm
+                    or XiaoCommand.PairingOpen or XiaoCommand.ClearBond, XiaoResult.Rejected) => true,
+                (XiaoCommand.ClearBond, XiaoResult.StorageFailed) => true,
+                _ => false
+            };
+            if (result == XiaoResult.StorageFailed && command == XiaoCommand.ClearBond)
+                throw new IOException("XIAOの登録ファイルを削除できませんでした。登録状態を確認してから再試行してください。");
+            throw new IOException($"XIAO操作失敗: {result}。自動再送しません。");
         }
         catch (OperationCanceledException error) when (requestTimeout.IsCancellationRequested
             && !cancellation.IsCancellationRequested && !lifetime.IsCancellationRequested)
@@ -104,7 +116,7 @@ public sealed class XiaoClient : IDisposable
         }
         catch
         {
-            if (sent) Abort();
+            if (sent && !keepSession) Abort();
             throw;
         }
         finally { if (registered) pending.TryRemove(number, out _); }
@@ -132,7 +144,9 @@ public sealed class XiaoClient : IDisposable
                     }
                     if (!pending.TryGetValue(frame.Sequence, out var request) || request.Command != frame.Command)
                         throw new InvalidDataException("XIAOの応答順序が一致しません。");
-                    if (frame.Payload.Length == 0) throw new InvalidDataException("XIAOの応答が空です。");
+                    if (frame.Payload.Length == 0
+                        || (frame.Payload[0] != (byte)XiaoResult.Success && frame.Payload.Length != 1))
+                        throw new InvalidDataException("XIAOの応答の長さが正しくありません。");
                     if (frame.Payload[0] == (byte)XiaoResult.Success)
                         AcceptStatus(frame.Generation, frame.Payload.AsSpan(1));
                     if (!request.Completion.TrySetResult(frame)) throw new InvalidDataException("XIAOの応答が重複しました。");

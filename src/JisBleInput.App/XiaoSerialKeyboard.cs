@@ -37,6 +37,9 @@ internal sealed class SerialPortChannel : IXiaoChannel
 
 internal sealed class XiaoSerialKeyboard : IKeyboardConnection
 {
+    internal sealed class AlreadyBondedException() : InvalidOperationException(
+        "登録済みのPCがあるため追加できません。変更する場合は基板の登録を解除してください。");
+
     private readonly object sync = new();
     private readonly Func<XiaoUsbPort, IXiaoChannel> open;
     private XiaoClient? client;
@@ -104,7 +107,7 @@ internal sealed class XiaoSerialKeyboard : IKeyboardConnection
         }
         if (newPairing)
         {
-            if (client!.Current!.Bonded) throw new InvalidOperationException("登録相手は1台です。変更する場合は基板の登録を解除してください。");
+            if (client!.Current!.Bonded) throw new AlreadyBondedException();
             await client.RequestAsync(XiaoCommand.PairingOpen, [], client.Generation, cancellation);
         }
         Status?.Invoke(newPairing ? "60秒間PCを登録できます。受信PCでJIS BLE Keyboardを追加してください。" : "XIAOに接続しました。登録済みPCの接続を待っています。");

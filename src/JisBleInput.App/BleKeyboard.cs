@@ -40,12 +40,31 @@ internal sealed class BleKeyboard : IReportTransport, IAdvertisementPublisher, I
             lock (sync)
             {
                 if (!IsStarted) return [];
-                return devices.Where(pair => pair.Value.ConnectionStatus == BluetoothConnectionStatus.Connected
-                        && pair.Value.DeviceInformation.Pairing.IsPaired)
-                    .Select(pair => new HostChoice(pair.Key, string.IsNullOrWhiteSpace(pair.Value.Name) ? "接続済みPC" : pair.Value.Name))
-                    .ToArray();
+                var hosts = new List<HostChoice>(devices.Count);
+                foreach (var (id, device) in devices)
+                {
+                    if (TryGetConnectedHost(id, device) is { } host) hosts.Add(host);
+                }
+                return hosts;
             }
         }
+    }
+
+    private static HostChoice? TryGetConnectedHost(string id, BluetoothLEDevice device)
+    {
+        string name;
+        try
+        {
+            if (device.ConnectionStatus != BluetoothConnectionStatus.Connected || !device.DeviceInformation.Pairing.IsPaired)
+                return null;
+            name = device.Name;
+        }
+        catch (Exception)
+        {
+            // A WinRT read can fail while a device is disconnecting. Keep the other devices visible.
+            return null;
+        }
+        return new HostChoice(id, string.IsNullOrWhiteSpace(name) ? "接続済みPC" : name);
     }
 
     public bool HasConnectedHost

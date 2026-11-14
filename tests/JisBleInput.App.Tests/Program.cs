@@ -1,4 +1,5 @@
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Threading;
 using System.Windows.Media;
@@ -53,6 +54,7 @@ internal static class UiTestProgram
         await VerifyConnectionPreparationAsync();
         await VerifyHostChoiceGuidanceAsync();
         await XiaoConnectionChecks.RunAsync(Check);
+        await VerifyX64PreferencesAsync();
 
         // Exercise the real WPF Closing handler and NotifyIcon without starting
         // a GATT service, sending text or changing the computer's Bluetooth radio.
@@ -113,9 +115,50 @@ internal static class UiTestProgram
         var mode = Find<ComboBox>(window, "InputMode");
         var speed = Find<ComboBox>(window, "InputSpeed");
         var layout = Find<ComboBox>(settings, "ReceiverLayout");
-        Check(speed.Items.Count == 3 && !layout.IsEnabled, "Japanese mode retains three speeds and disables ASCII-only layout selection");
+        Check(speed.Items.Count == 4 && speed.SelectedIndex == 0 && !layout.IsEnabled,
+            "Bluetooth Japanese offers a trial alongside the three saved speeds");
         mode.SelectedIndex = 1;
-        Check(speed.Items.Count == 3 && layout.IsEnabled, "ASCII mode retains three speeds and enables receiver layout selection");
+        Check(speed.Items.Count == 4 && layout.IsEnabled && speed.SelectedIndex == 1,
+            "Bluetooth ASCII offers a trial alongside the three saved speeds");
+        speed.SelectedIndex = 3;
+        Check(window.SelectedOptions().DirectSpeed == AsciiSpeed.XiaoFastest,
+            "the Bluetooth ASCII trial uses the same waits as the fastest XIAO preset");
+        mode.SelectedIndex = 0;
+        Check(window.SelectedOptions().Speed == JapaneseSpeed.Standard && window.SelectedOptions().DirectSpeed == AsciiSpeed.Fast,
+            "the ASCII trial leaves Japanese mode and its saved settings intact");
+        speed.SelectedIndex = 3;
+        Check(window.SelectedOptions().Speed == JapaneseSpeed.XiaoFastest,
+            "the Bluetooth Japanese trial uses the same waits as the fastest XIAO preset");
+        mode.SelectedIndex = 1;
+        Check(speed.SelectedIndex == 3 && window.SelectedOptions().DirectSpeed == AsciiSpeed.XiaoFastest,
+            "selecting the Japanese trial preserves the separate ASCII trial selection");
+        mode.SelectedIndex = 0;
+        Check(speed.SelectedIndex == 3 && window.SelectedOptions().Speed == JapaneseSpeed.XiaoFastest,
+            "the Japanese trial selection survives switching modes");
+        var japaneseReceiver = Find<ComboBox>(settings, "JapaneseReceiver");
+        japaneseReceiver.SelectedIndex = 1;
+        Check(window.SelectedOptions() is { JapaneseInput: JapaneseInputMethod.MacUnicodeHex, Speed: JapaneseSpeed.SlightlyFaster }
+            && speed.SelectedIndex == 0 && speed.Items.Cast<string>().SequenceEqual(new[]
+            {
+                "標準（待ち 615 ms/字）", "速い（待ち 420 ms/字）", "さらに速い（待ち 280 ms/字）",
+                "最速（待ち 140 ms/字）", "高速試験（待ち 70 ms/字）"
+            }), "Mac Japanese removes the 840 ms preset and starts at the new standard");
+        speed.SelectedIndex = 2;
+        Check(window.SelectedOptions() is { JapaneseInput: JapaneseInputMethod.MacUnicodeHex, Speed: JapaneseSpeed.XiaoFastest },
+            "Mac Unicode Hex promotes 280 ms to a regular speed");
+        speed.SelectedIndex = 3;
+        Check(window.SelectedOptions() is { JapaneseInput: JapaneseInputMethod.MacUnicodeHex, Speed: JapaneseSpeed.MacUnicodeHexFastest },
+            "Mac Unicode Hex promotes 140 ms to the fastest regular speed");
+        speed.SelectedIndex = 4;
+        Check(window.SelectedOptions() is { JapaneseInput: JapaneseInputMethod.MacUnicodeHex, Speed: JapaneseSpeed.MacUnicodeHexHighSpeedTrial }
+            && speed.ToolTip is string tip && tip.Contains("設定値") && tip.Contains("Bluetooth通信"),
+            "Mac Unicode Hex offers a new 70 ms trial");
+        japaneseReceiver.SelectedIndex = 0;
+        Check(window.SelectedOptions() is { JapaneseInput: JapaneseInputMethod.MicrosoftIme, Speed: JapaneseSpeed.XiaoFastest },
+            "switching back restores Windows IME and its independent speed");
+        speed.SelectedIndex = 0;
+        mode.SelectedIndex = 1;
+        Check(speed.SelectedIndex == 3, "the trial selection survives switching modes in the same session");
         speed.SelectedIndex = 2;
         mode.SelectedIndex = 0;
         speed.SelectedIndex = 2;
@@ -406,7 +449,7 @@ internal static class UiTestProgram
         foreach (var stopDuringArm in new[] { true, false })
         {
             var connection = new PreparingConnection();
-            var window = new MainWindow(false, Path.Combine(settingsRoot, stopDuringArm.ToString()), keyboardConnection: connection);
+            var window = new MainWindow(Architecture.Arm64, false, Path.Combine(settingsRoot, stopDuringArm.ToString()), keyboardConnection: connection);
             try
             {
                 window.Show();
@@ -439,7 +482,7 @@ internal static class UiTestProgram
             finally { window.PrepareForSessionEnd(); window.Close(); }
         }
         var exiting = new PreparingConnection();
-        var exitWindow = new MainWindow(false, Path.Combine(settingsRoot, "exit"), keyboardConnection: exiting);
+        var exitWindow = new MainWindow(Architecture.Arm64, false, Path.Combine(settingsRoot, "exit"), keyboardConnection: exiting);
         var closed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         exitWindow.Closed += (_, _) => closed.TrySetResult();
         exitWindow.Show();
@@ -452,7 +495,7 @@ internal static class UiTestProgram
             "exit during ARM cancels the whole transfer and closes USB without the local Bluetooth shutdown path");
 
         var failing = new PreparingConnection();
-        var failingWindow = new MainWindow(false, Path.Combine(settingsRoot, "unexpected"), keyboardConnection: failing);
+        var failingWindow = new MainWindow(Architecture.Arm64, false, Path.Combine(settingsRoot, "unexpected"), keyboardConnection: failing);
         failingWindow.Show();
         var arming = failingWindow.SendToAsync(failing.Target!);
         await failing.Entered.Task;
@@ -471,7 +514,7 @@ internal static class UiTestProgram
         foreach (var local in new[] { false, true })
         {
             var connection = new UnselectedConnection(local);
-            var window = new MainWindow(false, Path.Combine(settingsRoot, local.ToString()), keyboardConnection: connection);
+            var window = new MainWindow(Architecture.Arm64, false, Path.Combine(settingsRoot, local.ToString()), keyboardConnection: connection);
             try
             {
                 window.Show();
@@ -483,6 +526,31 @@ internal static class UiTestProgram
                 Check(local ? status.Text == "接続待ち" && placeholder.Text == "送信先PC"
                     : status.Text == "送信先PCを選択してください" && placeholder.Text == "ここで送信先PCを選択" && placeholder.Visibility == Visibility.Visible,
                     local ? "local Bluetooth keeps the existing waiting label" : "XIAO asks to choose the connected registered PC");
+                if (local)
+                {
+                    window.OpenSettings();
+                    var settings = window.OwnedWindows.Cast<Window>().Single();
+                    var prepareInput = Find<Button>(settings, "PrepareInputButton");
+                    var japaneseReceiver = Find<ComboBox>(settings, "JapaneseReceiver");
+                    japaneseReceiver.SelectedIndex = 1;
+                    Check(prepareInput.Visibility == Visibility.Collapsed && !prepareInput.IsEnabled,
+                        "manual input preparation is hidden in Mac Japanese mode before selecting a recipient");
+                    Find<ComboBox>(window, "Hosts").SelectedIndex = 0;
+                    Check(prepareInput.Visibility == Visibility.Collapsed && !prepareInput.IsEnabled,
+                        "manual input preparation remains hidden with a selected Mac recipient");
+                    Find<TextBox>(window, "Editor").Text = "橋";
+                    await window.SendToAsync(connection.Target!, prepareOnly: true);
+                    Check(connection.Reports.Count == 0, "manual input preparation sends no reports in Mac Japanese mode");
+                    Find<ComboBox>(window, "InputSpeed").SelectedIndex = 4;
+                    await window.SendToAsync(connection.Target!);
+                    Check(connection.Reports.Count > 4 && connection.Reports[1][2] == 0x6D
+                        && connection.Reports[2].All(value => value == 0) && connection.Reports[3][0] == 0x04
+                        && connection.Reports.Count(report => report[2] == 0x6D) == 1,
+                        "the 70 ms trial taps F18 once before the first Option press");
+                    japaneseReceiver.SelectedIndex = 0;
+                    Check(prepareInput.Visibility == Visibility.Visible && prepareInput.IsEnabled,
+                        "manual IME preparation is available after switching back to Windows Japanese mode");
+                }
                 if (!local)
                 {
                     Find<ComboBox>(window, "Hosts").SelectedIndex = 0;
@@ -506,17 +574,91 @@ internal static class UiTestProgram
                     window.OpenSettings();
                     Find<ComboBox>(window.OwnedWindows.Cast<Window>().Single(), "ConnectionMethod").SelectedIndex = 0;
                     await window.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Background);
-                    Check(speed.Items.Count == 3 && speed.SelectedIndex == 0, "switching to local Bluetooth restores the local Japanese speed");
+                    Check(speed.Items.Count == 4 && speed.SelectedIndex == 0, "switching to local Bluetooth restores the local Japanese speed");
                     mode.SelectedIndex = 1;
-                    Check(speed.Items.Count == 3 && speed.SelectedIndex == 1, "switching to local Bluetooth restores the local ASCII speed");
+                    Check(speed.Items.Count == 4 && speed.SelectedIndex == 1, "switching to local Bluetooth restores the local ASCII speed");
                 }
             }
             finally { window.PrepareForSessionEnd(); window.Close(); }
         }
     }
 
+    private static async Task VerifyX64PreferencesAsync()
+    {
+        foreach (var hasXiaoSettings in new[] { false, true })
+        {
+            var directory = Path.Combine("_internal", "build-cache", "test-data", "x64", Guid.NewGuid().ToString("N"));
+            var transportPath = Path.Combine(directory, "transport-preferences.json");
+            if (hasXiaoSettings)
+                new TransportPreferencesStore(transportPath).Save(new(Method: ConnectionMethod.XiaoUsb,
+                    BoardHash: new string('A', 64), PeerHash: new string('B', 64)));
+            var before = hasXiaoSettings ? File.ReadAllBytes(transportPath) : null;
+            var inputStore = new InputPreferencesStore(Path.Combine(directory, "input-preferences.json"));
+            inputStore.Save(new(XiaoJapanesePreset: XiaoSpeedPreset.Fastest, XiaoAsciiPreset: XiaoSpeedPreset.Slow));
+            var presetStore = new TextPresetStore(Path.Combine(directory, "text-presets.json"));
+            presetStore.Save([new("試験用", "ABC", TextInputMode.Ascii, 1, 2)]);
+            int generated = 0, discovered = 0, opened = 0;
+            var local = new UnselectedConnection(true);
+            var window = new MainWindow(Architecture.X64, false, directory, keyboardConnection: local,
+                createXiao: () =>
+                {
+                    generated++;
+                    return new XiaoSerialKeyboard(_ => { opened++; throw new InvalidOperationException(); });
+                })
+            {
+                DiscoverPorts = () => { discovered++; return []; }
+            };
+            window.Show();
+            try
+            {
+                if (hasXiaoSettings)
+                    Check(Find<TextBlock>(window, "TransferMessage").Text.Contains("送信先PCを確認"), "x64 explains the fallback for saved XIAO settings");
+                await window.StartConnectionAsync(false);
+                Find<ComboBox>(window, "Hosts").SelectedIndex = 0;
+                await window.StartConnectionAsync(false);
+                await window.TryReconnectXiaoAsync();
+                Find<ComboBox>(window, "InputSpeed").SelectedIndex = 2;
+                Find<Button>(window, "SettingsButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                var settings = window.OwnedWindows.Cast<Window>().Single();
+                var method = Find<ComboBox>(settings, "ConnectionMethod");
+                Check(method.Items.Count == 1 && !method.IsEnabled && method.SelectedIndex == 0, "x64 offers only built-in Bluetooth");
+                var edit = window.Dispatcher.InvokeAsync(() =>
+                {
+                    var manager = settings.OwnedWindows.OfType<TextPresetsWindow>().Single();
+                    try
+                    {
+                        Find<ComboBox>(manager, "PresetEntries").SelectedIndex = 1;
+                        Find<TextBox>(manager, "PresetText").Text = "変更した本文";
+                        var mode = Find<ComboBox>(manager, "PresetMode");
+                        mode.SelectedIndex = (int)TextInputMode.Japanese;
+                        Find<Button>(manager, "SavePresetButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                    }
+                    finally { manager.Close(); }
+                }, DispatcherPriority.ApplicationIdle);
+                Find<Button>(settings, "ManagePresetsButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                await edit.Task;
+            }
+            finally
+            {
+                window.PrepareForSessionEnd();
+                window.Close();
+            }
+            Check(generated == 0 && discovered == 0 && opened == 0, "x64 never creates, enumerates or opens XIAO");
+            Check(before is null ? !File.Exists(transportPath) : before.SequenceEqual(File.ReadAllBytes(transportPath)),
+                "x64 leaves the transport preference file byte-for-byte intact or absent");
+            var input = inputStore.Load();
+            Check(input.JapaneseSpeed == JapaneseSpeed.Faster && input.XiaoJapanesePreset == XiaoSpeedPreset.Fastest
+                && input.XiaoAsciiPreset == XiaoSpeedPreset.Slow, "x64 saves Bluetooth speed and retains both XIAO speeds");
+            Check(presetStore.Load().Presets.Single() == new TextPreset("試験用", "変更した本文", TextInputMode.Japanese, null, 2),
+                "x64 edits a preset and changes its mode without clearing XIAO speed");
+            Check(new ConnectionPreferencesStore(Path.Combine(directory, "connection-preferences.json")).Load().PeerHash
+                == ConnectionPreferences.HashPeer(local.Hosts.Single().Id), "x64 stores the selected peer only in the Bluetooth preferences");
+        }
+    }
+
     private sealed class UnselectedConnection(bool local) : IKeyboardConnection
     {
+        public List<byte[]> Reports { get; } = [];
         private string? selected;
         public int Selections { get; private set; }
         public event Action? Changed;
@@ -536,7 +678,11 @@ internal static class UiTestProgram
         public Task EndSendAsync(SendTarget target, CancellationToken cancellation) => Task.CompletedTask;
         public Task WaitForHostsDisconnectedAsync(CancellationToken cancellation) => Task.CompletedTask;
         public bool IsReady(SendTarget target) => target == Target;
-        public Task WriteAsync(byte[] report, SendTarget target, CancellationToken cancellation) => Task.CompletedTask;
+        public Task WriteAsync(byte[] report, SendTarget target, CancellationToken cancellation)
+        {
+            Reports.Add(report);
+            return Task.CompletedTask;
+        }
         public void Dispose() { }
     }
 

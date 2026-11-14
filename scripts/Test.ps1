@@ -1,6 +1,6 @@
 #requires -Version 7.4
 [CmdletBinding()]
-param([switch]$NoRestore, [switch]$Package)
+param([switch]$NoRestore, [switch]$Package, [string]$Arm64Package, [string]$X64Package)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -54,7 +54,8 @@ try {
     if ($Package) {
         Import-Module Pester -MinimumVersion 5.7.1
         $configuration = New-PesterConfiguration
-        $configuration.Run.Path = Join-Path $projectRoot 'tests/PublishLayout.Tests.ps1'
+        $packageTestData = @{ Arm64Package = $Arm64Package; X64Package = $X64Package }
+        $configuration.Run.Container = New-PesterContainer -Path (Join-Path $projectRoot 'tests/PublishLayout.Tests.ps1') -Data $packageTestData
         $configuration.Run.PassThru = $true
         $configuration.TestRegistry.Enabled = $false
         $configuration.TestDrive.Enabled = $false

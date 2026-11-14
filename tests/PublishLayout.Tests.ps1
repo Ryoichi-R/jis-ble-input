@@ -1,21 +1,26 @@
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseDeclaredVarsMoreThanAssignments', '', Justification = 'Pester exposes BeforeAll variables to the It blocks; the analyzer does not follow that scope.')]
-param()
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '', Justification = 'Pester passes container parameters into the BeforeAll blocks.')]
+param([string]$Arm64Package, [string]$X64Package)
 
-Describe 'ARM64 publish package validation' -Tag 'PackageIntegration' {
+Describe 'ARM64 publish package validation' -Tag 'PackageIntegration', 'Arm64Package' {
     BeforeAll {
         $projectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
         $workspaceRoot = Join-Path $projectRoot '_internal/build-cache'
         Import-Module (Join-Path $projectRoot 'scripts/PublishLayout.psm1') -Force
-        $publish = Join-Path $projectRoot '_internal/build-cache/bin/JisBleInput.App/Release/net10.0-windows10.0.19041.0/win-arm64/publish'
         [xml]$definition = Get-Content (Join-Path $projectRoot 'src/JisBleInput.App/JisBleInput.App.csproj') -Raw
         $version = [string]$definition.Project.PropertyGroup.Version
         $runtime = [string]$definition.Project.PropertyGroup.BundledRuntimeVersion
         $firmware = (Get-Content -LiteralPath (Join-Path $projectRoot 'firmware/xiao-nrf52840/toolchain.json') -Raw | ConvertFrom-Json).firmware
+        if (-not $Arm64Package) { $Arm64Package = Join-Path $projectRoot "_internal/dist/jis-ble-input-$version-win-arm64.zip" }
+        $extracted = Join-Path $workspaceRoot "package-tests/$([guid]::NewGuid().ToString('N'))"
+        $publish = Join-Path $extracted 'win-arm64'
+        Expand-Archive -LiteralPath $Arm64Package -DestinationPath $publish
     }
 
     It 'checks the actual EXE architecture, embedded runtimes and required distribution files' {
         $result = Test-PublishLayout -PublishPath $publish -Version $version -RuntimeVersion $runtime
         $result.RuntimeVersion | Should -Be $runtime
+        $result.Sha256 | Should -Match '^[A-F0-9]{64}$'
         $result.Sha256 | Should -Match '^[A-F0-9]{64}$'
     }
 
@@ -90,4 +95,77 @@ Describe 'ARM64 publish package validation' -Tag 'PackageIntegration' {
         }
         { Test-PublishLayout -PublishPath $fixture -Version $version -RuntimeVersion $runtime } | Should -Throw '*PUBLISH_FILE_MISSING: licenses/windows-ble-hid-LICENSE.txt*'
     }
+}
+
+Describe 'x64 publish package validation' -Tag 'PackageIntegration', 'X64Package' {
+    BeforeAll {
+        $projectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+        Import-Module (Join-Path $projectRoot 'scripts/PublishLayout.psm1') -Force
+        [xml]$definition = Get-Content (Join-Path $projectRoot 'src/JisBleInput.App/JisBleInput.App.csproj') -Raw
+        $version = [string]$definition.Project.PropertyGroup.Version
+        $runtime = [string]$definition.Project.PropertyGroup.BundledRuntimeVersion
+        if (-not $X64Package) { $X64Package = Join-Path $projectRoot "_internal/dist/jis-ble-input-$version-win-x64.zip" }
+        $x64 = Join-Path $projectRoot "_internal/build-cache/package-tests/$([guid]::NewGuid().ToString('N'))/win-x64"
+        Expand-Archive -LiteralPath $X64Package -DestinationPath $x64
+    }
+
+    It 'checks the extracted x64 executable, bundled runtimes and distribution files' {
+        $result = Test-PublishLayout -PublishPath $x64 -Version $version -RuntimeVersion $runtime -RuntimeIdentifier win-x64
+        $result.RuntimeIdentifier | Should -Be 'win-x64'
+        $result.Sha256 | Should -Match '^[A-F0-9]{64}$'
+    }
+
+    It 'rejects the ARM64 machine code in an x64 bundle' {
+        $exe = Join-Path $x64 'JisBleInput.exe'
+        $file = [IO.File]::Open($exe, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite)
+        try {
+            $file.Position = 0x3C
+            $offset = [IO.BinaryReader]::new($file, [Text.Encoding]::UTF8, $true).ReadInt32() + 4
+            $file.Position = $offset
+            $machine = [byte[]]@($file.ReadByte(), $file.ReadByte())
+            $file.Position = $offset
+            $file.Write([byte[]]@(0x64, 0xAA))
+        } finally { $file.Dispose() }
+        try {
+            { Test-PublishLayout -PublishPath $x64 -Version $version -RuntimeVersion $runtime -RuntimeIdentifier win-x64 } |
+                Should -Throw '*PUBLISH_PE_MACHINE_MISMATCH*'
+        } finally {
+            $file = [IO.File]::OpenWrite($exe)
+            try { $file.Position = $offset; $file.Write($machine) }
+            finally { $file.Dispose() }
+        }
+    }
+
+    It 'rejects each ARM64-only x64 package member' {
+        foreach ($relative in @('firmware', 'docs/XIAO-PROTOCOL.md', 'docs/XIAO-SPEED-TRIAL.md',
+                'samples/xiao-japanese-trial.txt', 'samples/Compare-XiaoTrialText.ps1')) {
+            $extra = Join-Path $x64 $relative
+            $null = New-Item -ItemType Directory -Force -Path (Split-Path -Parent $extra)
+            [IO.File]::WriteAllText($extra, 'synthetic fixture')
+            try {
+                { Test-PublishLayout -PublishPath $x64 -Version $version -RuntimeVersion $runtime -RuntimeIdentifier win-x64 } |
+                    Should -Throw "*PUBLISH_FORBIDDEN_FILE: $relative*"
+            } finally { Remove-Item -LiteralPath $extra }
+        }
+    }
+
+    It 'rejects a leftover file even when the current files are intact' {
+        $extra = Join-Path $x64 'JisBleInput.old.exe'
+        [IO.File]::WriteAllText($extra, 'synthetic fixture')
+        try {
+            { Test-PublishLayout -PublishPath $x64 -Version $version -RuntimeVersion $runtime -RuntimeIdentifier win-x64 } |
+                Should -Throw '*PUBLISH_UNEXPECTED_FILE*'
+        } finally { Remove-Item -LiteralPath $extra }
+    }
+
+    It 'rejects a changed common file' {
+        $sample = Join-Path $x64 'samples/ascii-url.txt'
+        $original = [IO.File]::ReadAllBytes($sample)
+        [IO.File]::AppendAllText($sample, 'tampered')
+        try {
+            { Test-PublishLayout -PublishPath $x64 -Version $version -RuntimeVersion $runtime -RuntimeIdentifier win-x64 } |
+                Should -Throw '*PUBLISH_MANIFEST_MISMATCH*'
+        } finally { [IO.File]::WriteAllBytes($sample, $original) }
+    }
+
 }

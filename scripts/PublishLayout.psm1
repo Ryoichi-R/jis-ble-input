@@ -43,12 +43,18 @@ function Test-PublishLayout {
     param(
         [Parameter(Mandatory)][string]$PublishPath,
         [Parameter(Mandatory)][string]$Version,
-        [Parameter(Mandatory)][string]$RuntimeVersion
+        [Parameter(Mandatory)][string]$RuntimeVersion,
+        [ValidateSet('win-arm64', 'win-x64')][string]$RuntimeIdentifier = 'win-arm64'
+    )
+    $arm64 = $RuntimeIdentifier -eq 'win-arm64'
+    $xiaoFiles = @(
+        'docs/XIAO-PROTOCOL.md', 'docs/XIAO-SPEED-TRIAL.md',
+        'samples/xiao-japanese-trial.txt', 'samples/Compare-XiaoTrialText.ps1'
     )
     $required = @(
         'JisBleInput.exe', 'README.md', 'VALIDATION.md', 'licenses/windows-ble-hid-LICENSE.txt',
         'LICENSE', 'SECURITY.md', 'SUPPORT.md', 'THIRD-PARTY-NOTICES.md',
-        'sbom.cdx.json',
+        'sbom.cdx.json', 'manifest.json', 'licenses/README.md',
         'licenses/dotnet-runtime/LICENSE.TXT', 'licenses/dotnet-runtime/THIRD-PARTY-NOTICES.TXT',
         'licenses/windows-desktop-runtime/LICENSE.TXT',
         'licenses/windows-desktop-runtime/THIRD-PARTY-NOTICES-WPF.TXT', 'licenses/windows-desktop-runtime/THIRD-PARTY-NOTICES-WINFORMS.TXT',
@@ -56,17 +62,24 @@ function Test-PublishLayout {
         'licenses/dotnet-host/LICENSE.TXT', 'licenses/dotnet-host/THIRD-PARTY-NOTICES.TXT',
         'licenses/system-io-ports/LICENSE.TXT', 'licenses/system-io-ports/THIRD-PARTY-NOTICES.TXT',
         'licenses/system-io-ports/source.json',
-        'docs/XIAO-PROTOCOL.md', 'firmware/README.md', 'firmware/compatibility.json', 'firmware/toolchain.json',
-        'firmware/xiao-nrf52840.ino.uf2', 'firmware/xiao-nrf52840.ino.hex', 'firmware/xiao-nrf52840.ino.zip',
-        'firmware/rebuild/Seeed_nRF52_Boards-1.1.13.tar.bz2', 'firmware/rebuild/linkable-objects.zip',
-        'firmware/rebuild/jis-ble-input/LICENSE', 'firmware/rebuild/jis-ble-input/scripts/Get-FirmwareHostTools.ps1',
-        'firmware/licenses/sdk/LICENSE', 'firmware/licenses/sdk/Nordic-SoftDevice-API.txt',
-        'firmware/licenses/sdk/LGPL-2.1.txt', 'firmware/licenses/sdk/libraries/Adafruit_nRFCrypto/src/cortex-m4/license.txt',
-        'firmware/licenses/sdk/libraries/Adafruit_nRFCrypto/src/nrf_cc310/license.txt',
         'samples/ascii-url.txt', 'samples/ascii-printable.txt', 'samples/multiline-crlf.txt',
-        'samples/multiline-lf.txt', 'samples/AC-08-100.txt', 'samples/AC-08-1000.txt',
-        'docs/XIAO-SPEED-TRIAL.md', 'samples/xiao-japanese-trial.txt', 'samples/Compare-XiaoTrialText.ps1'
+        'samples/multiline-lf.txt', 'samples/AC-08-100.txt', 'samples/AC-08-1000.txt'
     )
+    if ($arm64) {
+        $required += $xiaoFiles + @(
+            'firmware/README.md', 'firmware/compatibility.json', 'firmware/toolchain.json',
+            'firmware/xiao-nrf52840.ino.uf2', 'firmware/xiao-nrf52840.ino.hex', 'firmware/xiao-nrf52840.ino.zip',
+            'firmware/rebuild/Seeed_nRF52_Boards-1.1.13.tar.bz2', 'firmware/rebuild/linkable-objects.zip',
+            'firmware/rebuild/jis-ble-input/LICENSE', 'firmware/rebuild/jis-ble-input/scripts/Get-FirmwareHostTools.ps1',
+            'firmware/licenses/sdk/LICENSE', 'firmware/licenses/sdk/Nordic-SoftDevice-API.txt',
+            'firmware/licenses/sdk/LGPL-2.1.txt', 'firmware/licenses/sdk/libraries/Adafruit_nRFCrypto/src/cortex-m4/license.txt',
+            'firmware/licenses/sdk/libraries/Adafruit_nRFCrypto/src/nrf_cc310/license.txt'
+        )
+    } else {
+        foreach ($relative in ($xiaoFiles + 'firmware')) {
+            if (Test-Path -LiteralPath (Join-Path $PublishPath $relative)) { throw "PUBLISH_FORBIDDEN_FILE: $relative" }
+        }
+    }
     foreach ($relative in $required) {
         $path = Join-Path $PublishPath $relative
         if (-not (Test-Path -LiteralPath $path -PathType Leaf) -or (Get-Item -LiteralPath $path).Length -eq 0) {
@@ -75,19 +88,21 @@ function Test-PublishLayout {
     }
     $exe = Join-Path $PublishPath 'JisBleInput.exe'
     if ([Diagnostics.FileVersionInfo]::GetVersionInfo($exe).ProductVersion -ne $Version) { throw 'PUBLISH_VERSION_MISMATCH' }
-    $compatibility = Get-Content -LiteralPath (Join-Path $PublishPath 'firmware/compatibility.json') -Raw | ConvertFrom-Json
-    $toolchain = Get-Content -LiteralPath (Join-Path $PublishPath 'firmware/toolchain.json') -Raw | ConvertFrom-Json
-    if ($compatibility.AppVersion -ne $Version -or $compatibility.Firmware -ne $toolchain.firmware -or $compatibility.Protocol -ne 1 -or $toolchain.protocol -ne 1) { throw 'PUBLISH_FIRMWARE_VERSION_MISMATCH' }
-    foreach ($name in @('xiao-nrf52840.ino.uf2', 'xiao-nrf52840.ino.hex', 'xiao-nrf52840.ino.zip')) {
-        $entry = @($compatibility.Images | Where-Object Name -EQ $name)
-        if ($entry.Count -ne 1 -or (Get-FileHash -LiteralPath (Join-Path $PublishPath "firmware/$name")).Hash -ne $entry[0].Sha256) { throw 'PUBLISH_FIRMWARE_HASH_MISMATCH' }
+    if ($arm64) {
+        $compatibility = Get-Content -LiteralPath (Join-Path $PublishPath 'firmware/compatibility.json') -Raw | ConvertFrom-Json
+        $toolchain = Get-Content -LiteralPath (Join-Path $PublishPath 'firmware/toolchain.json') -Raw | ConvertFrom-Json
+        if ($compatibility.AppVersion -ne $Version -or $compatibility.Firmware -ne $toolchain.firmware -or $compatibility.Protocol -ne 1 -or $toolchain.protocol -ne 1) { throw 'PUBLISH_FIRMWARE_VERSION_MISMATCH' }
+        foreach ($name in @('xiao-nrf52840.ino.uf2', 'xiao-nrf52840.ino.hex', 'xiao-nrf52840.ino.zip')) {
+            $entry = @($compatibility.Images | Where-Object Name -EQ $name)
+            if ($entry.Count -ne 1 -or (Get-FileHash -LiteralPath (Join-Path $PublishPath "firmware/$name")).Hash -ne $entry[0].Sha256) { throw 'PUBLISH_FIRMWARE_HASH_MISMATCH' }
+        }
+        if ($compatibility.PSObject.Properties.Name -notcontains 'Fqbn' -or $compatibility.Fqbn -ne 'Seeeduino:nrf52:xiaonRF52840Sense:softdevice=s140v6,debug=l0') { throw 'PUBLISH_FIRMWARE_FQBN_MISMATCH' }
+        $descriptorPath = Join-Path $PublishPath 'firmware/rebuild/jis-ble-input/contracts/xiao-protocol-v1/descriptor.hex'
+        if (-not (Test-Path -LiteralPath $descriptorPath -PathType Leaf)) { throw 'PUBLISH_FILE_MISSING: firmware descriptor contract' }
+        $descriptor = [Convert]::FromHexString([IO.File]::ReadAllText($descriptorPath).Trim())
+        if ($compatibility.PSObject.Properties.Name -notcontains 'DescriptorSha256' -or
+            $compatibility.DescriptorSha256 -ne [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($descriptor))) { throw 'PUBLISH_FIRMWARE_DESCRIPTOR_MISMATCH' }
     }
-    if ($compatibility.PSObject.Properties.Name -notcontains 'Fqbn' -or $compatibility.Fqbn -ne 'Seeeduino:nrf52:xiaonRF52840Sense:softdevice=s140v6,debug=l0') { throw 'PUBLISH_FIRMWARE_FQBN_MISMATCH' }
-    $descriptorPath = Join-Path $PublishPath 'firmware/rebuild/jis-ble-input/contracts/xiao-protocol-v1/descriptor.hex'
-    if (-not (Test-Path -LiteralPath $descriptorPath -PathType Leaf)) { throw 'PUBLISH_FILE_MISSING: firmware descriptor contract' }
-    $descriptor = [Convert]::FromHexString([IO.File]::ReadAllText($descriptorPath).Trim())
-    if ($compatibility.PSObject.Properties.Name -notcontains 'DescriptorSha256' -or
-        $compatibility.DescriptorSha256 -ne [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($descriptor))) { throw 'PUBLISH_FIRMWARE_DESCRIPTOR_MISMATCH' }
     $noticeRoot = Join-Path $PublishPath 'licenses/windows-desktop-runtime'
     $notices = Get-Content -LiteralPath (Join-Path $noticeRoot 'sources.json') -Raw | ConvertFrom-Json
     if ($notices.runtimeVersion -ne $RuntimeVersion) { throw 'PUBLISH_NOTICE_VERSION_MISMATCH' }
@@ -102,7 +117,8 @@ function Test-PublishLayout {
         $stream.Position = 0x3C
         $pe = $reader.ReadInt32()
         $stream.Position = $pe
-        if ($reader.ReadUInt32() -ne 0x4550 -or $reader.ReadUInt16() -ne 0xAA64) { throw 'PUBLISH_NOT_ARM64' }
+        $machine = if ($arm64) { 0xAA64 } else { 0x8664 }
+        if ($reader.ReadUInt32() -ne 0x4550 -or $reader.ReadUInt16() -ne $machine) { throw "PUBLISH_PE_MACHINE_MISMATCH: $RuntimeIdentifier" }
     } finally { $reader.Dispose() }
     $config = Get-PublishedRuntime -ExePath $exe
     $frameworks = @($config.runtimeOptions.includedFrameworks)
@@ -112,7 +128,48 @@ function Test-PublishLayout {
     }
     $portsSource = Get-Content -LiteralPath (Join-Path $PublishPath 'licenses/system-io-ports/source.json') -Raw | ConvertFrom-Json
     if ($portsSource.Version -ne $RuntimeVersion -or (Get-PublishedRuntime -ExePath $exe -BundleEntryHash 'System.IO.Ports.dll') -ne $portsSource.WindowsAssemblySha256) { throw 'PUBLISH_PORTS_ASSEMBLY_MISMATCH' }
-    [pscustomobject]@{ Version = $Version; RuntimeVersion = $RuntimeVersion; Sha256 = (Get-FileHash -LiteralPath $exe).Hash; RequiredFiles = $required.Count }
+    $bom = Get-Content -LiteralPath (Join-Path $PublishPath 'sbom.cdx.json') -Raw | ConvertFrom-Json
+    if ($bom.bomFormat -ne 'CycloneDX' -or $bom.metadata.component.version -ne $Version) { throw 'PUBLISH_SBOM_VERSION_MISMATCH' }
+    if (@($bom.components.'bom-ref' | Sort-Object -Unique).Count -ne $bom.components.Count) { throw 'PUBLISH_SBOM_DUPLICATE_COMPONENT' }
+    foreach ($prefix in @('Microsoft.NETCore.App.Runtime', 'Microsoft.WindowsDesktop.App.Runtime', 'Microsoft.NETCore.App.Host')) {
+        $packs = @($bom.components | Where-Object name -Like "$prefix.win-*")
+        if ($packs.Count -ne 1 -or $packs[0].name -ne "$prefix.$RuntimeIdentifier" -or $packs[0].version -ne $RuntimeVersion) {
+            throw "PUBLISH_SBOM_RUNTIME_MISMATCH: $prefix"
+        }
+    }
+    $firmwareComponents = @($bom.components | Where-Object { $_.type -eq 'firmware' -or $_.'bom-ref' -eq 'seeed-nrf52-sdk-1.1.13' })
+    if ($arm64) {
+        foreach ($binding in @(
+                @{ Ref = "jis-ble-input-fw-$($compatibility.Firmware)"; Path = 'firmware/xiao-nrf52840.ino.uf2' },
+                @{ Ref = 'seeed-nrf52-sdk-1.1.13'; Path = 'firmware/rebuild/Seeed_nRF52_Boards-1.1.13.tar.bz2' })) {
+            $component = @($firmwareComponents | Where-Object 'bom-ref' -EQ $binding.Ref)
+            if ($component.Count -ne 1 -or $component[0].hashes[0].content -ne (Get-FileHash -LiteralPath (Join-Path $PublishPath $binding.Path)).Hash) {
+                throw "PUBLISH_SBOM_FIRMWARE_MISMATCH: $($binding.Path)"
+            }
+        }
+    } elseif ($firmwareComponents.Count) { throw 'PUBLISH_SBOM_FORBIDDEN_FIRMWARE' }
+
+    $manifest = Get-Content -LiteralPath (Join-Path $PublishPath 'manifest.json') -Raw | ConvertFrom-Json
+    $byPath = @{}
+    foreach ($entry in $manifest) {
+        if ($byPath.ContainsKey($entry.Path)) { throw "PUBLISH_MANIFEST_DUPLICATE: $($entry.Path)" }
+        $byPath[$entry.Path] = $entry
+    }
+    $exeHash = $null
+    foreach ($file in (Get-ChildItem -LiteralPath $PublishPath -File -Recurse -Force)) {
+        $relative = [IO.Path]::GetRelativePath($PublishPath, $file.FullName).Replace('\', '/')
+        if ($relative -eq 'manifest.json') { continue }
+        if ($relative -notin $required -and -not ($arm64 -and $relative.StartsWith('firmware/', [StringComparison]::OrdinalIgnoreCase))) {
+            throw "PUBLISH_UNEXPECTED_FILE: $relative"
+        }
+        $entry = $byPath[$relative]
+        $hash = (Get-FileHash -LiteralPath $file.FullName).Hash
+        if (-not $entry -or $entry.Bytes -ne $file.Length -or $entry.Sha256 -ne $hash) { throw "PUBLISH_MANIFEST_MISMATCH: $relative" }
+        $byPath.Remove($relative)
+        if ($relative -eq 'JisBleInput.exe') { $exeHash = $hash }
+    }
+    if ($byPath.Count) { throw 'PUBLISH_MANIFEST_EXTRA_ENTRY' }
+    [pscustomobject]@{ Version = $Version; RuntimeIdentifier = $RuntimeIdentifier; RuntimeVersion = $RuntimeVersion; Sha256 = $exeHash; RequiredFiles = $required.Count }
 }
 
 Export-ModuleMember -Function Get-PublishedRuntime, Test-PublishLayout

@@ -1,8 +1,20 @@
+using System.Runtime.InteropServices;
 using System.Text.Json;
 
 namespace JisBleInput.Core;
 
 public enum ConnectionMethod { LocalBluetooth, XiaoUsb }
+
+public static class ConnectionAvailability
+{
+    public static bool IsAvailable(Architecture architecture, ConnectionMethod method) => method switch
+    {
+        ConnectionMethod.LocalBluetooth => true,
+        ConnectionMethod.XiaoUsb => architecture == Architecture.Arm64,
+        _ => false
+    };
+}
+
 public sealed record TransportPreferences(int Version = 1, ConnectionMethod Method = ConnectionMethod.LocalBluetooth, string? BoardHash = null, string? PeerHash = null)
 {
     public void Validate()

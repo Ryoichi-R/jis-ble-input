@@ -146,4 +146,32 @@ public static class ImeKeyEncoder
         result.Add(new KeyStep(default, 150));
         return result;
     }
+
+    public static IReadOnlyList<KeyStep> EncodeMacUnicodeHex(char character, JapaneseSpeed speed)
+    {
+        _ = TextSnapshot.Create(character.ToString());
+        // Keep Option down across all four taps and separate its edges from the digit taps.
+        const byte option = 0x04;
+        var (optionDown, digitDown, digitUp, lastDigitUp, optionUp) = speed switch
+        {
+            JapaneseSpeed.Standard => (120, 60, 60, 120, 180),
+            JapaneseSpeed.SlightlyFaster => (90, 45, 45, 90, 120),
+            JapaneseSpeed.Faster => (60, 30, 30, 60, 90),
+            JapaneseSpeed.XiaoFastest => (40, 20, 20, 40, 60),
+            JapaneseSpeed.MacUnicodeHexFastest => (20, 10, 10, 20, 30),
+            JapaneseSpeed.MacUnicodeHexHighSpeedTrial => (10, 5, 5, 10, 15),
+            _ => throw new ArgumentException("Mac向けの入力速度を確認してください。")
+        };
+        var optionOnly = new KeyStroke(option, 0);
+        var steps = new List<KeyStep>(10) { new(optionOnly, optionDown) };
+        var digits = ((int)character).ToString("x4", CultureInfo.InvariantCulture);
+        for (var index = 0; index < digits.Length; index++)
+        {
+            var key = AsciiKeyEncoder.ToStroke(digits[index], ReceiverKeyboardLayout.EnglishUs);
+            steps.Add(new(new KeyStroke(option, key.Usage), digitDown));
+            steps.Add(new(optionOnly, index == digits.Length - 1 ? lastDigitUp : digitUp));
+        }
+        steps.Add(new(default, optionUp));
+        return steps;
+    }
 }

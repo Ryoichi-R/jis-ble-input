@@ -42,7 +42,9 @@ FW 0.1.1のCLEAR_BONDでは、登録ファイルを削除できなければ結�
 FW 0.1.2は、登録を保存する前に既存の登録ファイルを削除する。USBのフレームと応答は0.1.1と同じ。
 
 アプリ要求timeoutは1秒、BLE通知の空き待ちは500ms。USB/DTR断または正当な通信の途絶1,500msでARMを失効し解放する。DISARM/中断RELEASEで以前の非ゼロjobを破棄し、ゼロ投入成功後に停止完了ACKを返す。待機中もPINGを処理する。純粋状態機械は単一Arduino loopが所有し、BLEコールバックはハードウェア状態を渡す。BLE通知は非ブロッキングの`sd_ble_gatts_hvx`をこのloopだけから呼ぶ。
-アプリの「停止」は新しい入力要求を止め、進行中の要求には通常の応答期限を適用する。応答を受けてからRELEASE・DISARMへ進み、応答途絶時はUSBを閉じる。
+アプリの「停止」と、送信中にCapsLockやBLE接続の変化を検出した場合は、新しい入力要求を止め、進行中の要求には通常の応答期限を適用する。宛先と接続世代が有効であれば、応答後にRELEASE・DISARMでキー解放を試みる。宛先や世代が変わった場合の解放はFWが担う。
+
+FWが対象コマンドに対して返すNotReady・NotArmed・Rejectedと、CLEAR_BONDに対するStorageFailedは、操作を失敗として返し、USB接続を維持する。自動再送は行わない。不正・契約外の応答、応答途絶、書込開始後の取消、InvalidFrame・WrongSession・WrongSequence・WrongGeneration・Busy・NotificationFailedではUSBを閉じる。
 
 ## 57バイト状態
 

@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Runtime.InteropServices;
 using JisBleInput.App;
 using JisBleInput.Core;
 
@@ -9,12 +11,132 @@ void Check(bool condition, string label)
     Console.WriteLine($"PASS: {label}");
 }
 
+var macTarget = new SendTarget("synthetic-mac", 1);
+var macTransport = new FakeTransport(macTarget);
+var macWaits = new List<int>();
+var macSender = new StagedSender(macTransport, (milliseconds, _) =>
+{
+    macWaits.Add(milliseconds);
+    return Task.CompletedTask;
+});
+var macOptions = new SendOptions(JapaneseInput: JapaneseInputMethod.MacUnicodeHex);
+await macSender.SendAsync("日本語ABC橋。", macTarget, options: macOptions);
+var expectedCodes = new[] { "65e5", "672c", "8a9e", "0041", "0042", "0043", "6a4b", "3002" };
+var captured = macTransport.Frames;
+Check(macSender.State == SendState.KeysSent && captured.Count == 84
+    && captured[0].All(value => value == 0)
+    && captured[1].SequenceEqual(new byte[] { 0, 0, 0x6D, 0, 0, 0, 0, 0 })
+    && captured[2].All(value => value == 0) && captured[^1].All(value => value == 0)
+    && macWaits.Take(3).SequenceEqual(new[] { 120, 60, 500 })
+    && captured.Count(frame => frame[2] == 0x6D) == 1 && macSender.ProcessedCharacters == 8,
+    "Mac mixed text taps F18 once and waits for input switching before the first character");
+for (var index = 0; index < expectedCodes.Length; index++)
+{
+    var frames = captured.Skip(3 + index * 10).Take(10).ToArray();
+    Check(frames.Take(9).All(frame => frame[0] == 0x04)
+        && frames[9].All(value => value == 0)
+        && frames.Where((_, step) => step % 2 == 0).All(frame => frame[2] == 0)
+        && frames.Where((_, step) => step % 2 == 1 && step < 9).Select(frame => frame[2])
+            .SequenceEqual(expectedCodes[index].Select(digit => digit == '0' ? (byte)0x27
+                : digit <= '9' ? (byte)(0x1E + digit - '1') : (byte)(0x04 + digit - 'a'))),
+        $"Mac sends {expectedCodes[index]} with Option held and releases each digit without F5 or Enter");
+}
+Check(ImeKeyEncoder.EncodeMacUnicodeHex('日', JapaneseSpeed.Standard).Select(step => step.DelayMilliseconds)
+        .SequenceEqual(new[] { 120, 60, 60, 60, 60, 60, 60, 60, 120, 180 })
+    && ImeKeyEncoder.EncodeMacUnicodeHex('日', JapaneseSpeed.XiaoFastest).Select(step => step.DelayMilliseconds)
+        .SequenceEqual(new[] { 40, 20, 20, 20, 20, 20, 20, 20, 40, 60 }),
+    "Mac standard and trial pacing leave time before the first digit, between taps, and around Option release");
+var fastMacSteps = ImeKeyEncoder.EncodeMacUnicodeHex('A', JapaneseSpeed.MacUnicodeHexFastest);
+Check(fastMacSteps.Select(step => step.DelayMilliseconds).SequenceEqual(new[] { 20, 10, 10, 10, 10, 10, 10, 10, 20, 30 })
+    && fastMacSteps.Select(step => step.Stroke)
+        .SequenceEqual(ImeKeyEncoder.EncodeMacUnicodeHex('A', JapaneseSpeed.XiaoFastest).Select(step => step.Stroke)),
+    "The 140 ms Mac preset keeps the Option and repeated-digit edges of the 280 ms preset");
+var trialMacSteps = ImeKeyEncoder.EncodeMacUnicodeHex('A', JapaneseSpeed.MacUnicodeHexHighSpeedTrial);
+Check(trialMacSteps.Select(step => step.DelayMilliseconds).Sum() == 70
+    && trialMacSteps.SequenceEqual(fastMacSteps.Select(step => step with { DelayMilliseconds = step.DelayMilliseconds / 2 })),
+    "The 70 ms Mac trial halves every 140 ms preset wait while preserving the HID sequence");
+await RejectAsync(() => new StagedSender(new FakeTransport(macTarget), NoDelay).SendAsync("A", macTarget,
+        options: new SendOptions(Speed: JapaneseSpeed.MacUnicodeHexHighSpeedTrial)),
+    "The 70 ms trial is rejected in Windows Japanese mode");
+await RejectAsync(() => new StagedSender(new FakeTransport(macTarget), NoDelay).SendAsync("A", macTarget,
+        options: new SendOptions(Mode: TextInputMode.Ascii, Speed: JapaneseSpeed.MacUnicodeHexHighSpeedTrial,
+            JapaneseInput: JapaneseInputMethod.MacUnicodeHex)),
+    "The 70 ms trial is rejected in ASCII mode");
+
+if (OperatingSystem.IsWindows())
+{
+    var measured = new List<(JapaneseSpeed Speed, double MillisecondsPerCharacter, byte[][] Frames)>();
+    const string timingText = "日本語ABC橋。";
+    foreach (var speed in new[] { JapaneseSpeed.MacUnicodeHexFastest, JapaneseSpeed.MacUnicodeHexHighSpeedTrial })
+    {
+        var timedTransport = new FakeTransport(macTarget);
+        var timedMacSender = new StagedSender(timedTransport);
+        var timer = new Stopwatch();
+        timedMacSender.Progress += (count, _) =>
+        {
+            if (count == 1) timer.Start();
+        };
+        await timedMacSender.SendAsync(timingText, macTarget, options: macOptions with { Speed = speed });
+        timer.Stop();
+        Check(timedMacSender.State == SendState.KeysSent && timedMacSender.ProcessedCharacters == timingText.Length
+            && timedMacSender.ReleaseReportSent == true, $"The Windows timer completes a full Mac send at {speed}");
+        measured.Add((speed, timer.Elapsed.TotalMilliseconds / (timingText.Length - 1), timedTransport.Frames.ToArray()));
+    }
+    Check(measured[0].Frames.Select(Convert.ToHexString).SequenceEqual(measured[1].Frames.Select(Convert.ToHexString)),
+        "The real Windows trial timer preserves the full report sequence including F18 and final release");
+    foreach (var sample in measured)
+        Console.WriteLine($"TIMING: {sample.Speed} {sample.MillisecondsPerCharacter:F1} ms/character (no Bluetooth)");
+}
+var macAbortTransport = new FakeTransport(macTarget);
+using (var abort = new CancellationTokenSource())
+{
+    var delays = new List<int>();
+    var macAbortSender = new StagedSender(macAbortTransport, (milliseconds, cancellation) =>
+    {
+        delays.Add(milliseconds);
+        if (delays.Count == 5) abort.Cancel();
+        cancellation.ThrowIfCancellationRequested();
+        return Task.CompletedTask;
+    });
+    await macAbortSender.SendSnapshotAsync(TextSnapshot.Create("日"), macTarget, macOptions, abort.Token);
+    Check(delays.SequenceEqual(new[] { 120, 60, 500, 120, 60 })
+        && macAbortTransport.Frames.Count == 6 && macAbortTransport.Frames[^1].All(value => value == 0)
+        && macAbortSender.State == SendState.StoppedPartial && macAbortSender.ReleaseReportSent == true,
+        "Stopping during a digit releases Option and the digit before another key can be sent");
+}
+var switchAbortTransport = new FakeTransport(macTarget);
+using (var abort = new CancellationTokenSource())
+{
+    var switchAbortSender = new StagedSender(switchAbortTransport, (milliseconds, cancellation) =>
+    {
+        if (milliseconds == 500) abort.Cancel();
+        cancellation.ThrowIfCancellationRequested();
+        return Task.CompletedTask;
+    });
+    await switchAbortSender.SendSnapshotAsync(TextSnapshot.Create("日"), macTarget, macOptions, abort.Token);
+    Check(switchAbortSender.State == SendState.StoppedPartial && switchAbortSender.ProcessedCharacters == 0
+        && switchAbortTransport.Frames.Count == 4 && switchAbortTransport.Frames.All(frame => frame[0] == 0)
+        && switchAbortTransport.Frames[^1].All(value => value == 0),
+        "cancel during the input switch leaves all keys released and sends no text");
+}
+captured.Clear();
+await macSender.SendAsync("日\r\n本", macTarget, allowLineBreaks: true, options: macOptions);
+Check(captured.Count(frame => frame[0] == 0 && frame[2] == 0x28) == 1,
+    "Mac Unicode Hex sends Return only for an explicit line break and treats CRLF as one unit");
+
 async Task RejectAsync(Func<Task> operation, string label)
 {
     try { await operation(); }
     catch (ArgumentException) { Check(true, label); return; }
     catch (InvalidOperationException) { Check(true, label); return; }
     Check(false, label);
+}
+
+foreach (var architecture in Enum.GetValues<Architecture>())
+{
+    Check(ConnectionAvailability.IsAvailable(architecture, ConnectionMethod.LocalBluetooth)
+        && ConnectionAvailability.IsAvailable(architecture, ConnectionMethod.XiaoUsb) == (architecture == Architecture.Arm64),
+        $"transport availability follows process architecture {architecture}");
 }
 
 Task NoDelay(int _, CancellationToken token)
@@ -106,6 +228,23 @@ var setup = new StagedSender(setupTransport, NoDelay);
 await setup.PrepareImeAsync(destination);
 Check(setup.State == SendState.Ready && setupReceiver.Mode == InputMode.Hiragana, "optional preparation selects Hiragana without typing text");
 Check(!setupTransport.HasKey(0x3E) && !setupTransport.HasKey(0x28) && setup.ProcessedCharacters == 0, "preparation alone sends neither F5 nor Enter");
+
+var repeatMacTransport = new FakeTransport(destination);
+var repeatMacSender = new StagedSender(repeatMacTransport, NoDelay);
+var macSnapshot = TextSnapshot.Create("橋");
+for (var sendIndex = 0; sendIndex < 2; sendIndex++)
+{
+    var offset = repeatMacTransport.Frames.Count;
+    await repeatMacSender.SendSnapshotAsync(macSnapshot, destination, macOptions);
+    Check(repeatMacTransport.Frames[offset + 1][2] == 0x6D
+        && repeatMacTransport.Frames.Skip(offset).Count(report => report[2] == 0x6D) == 1,
+        "each Mac Japanese send starts with one F18 tap");
+}
+var reportCount = repeatMacTransport.Frames.Count;
+await RejectAsync(() => repeatMacSender.SendSnapshotAsync(macSnapshot,
+        destination with { Generation = destination.Generation + 1 }, macOptions),
+    "Mac Japanese send rejects a stale recipient generation");
+Check(repeatMacTransport.Frames.Count == reportCount, "a stale recipient receives neither F18 nor the text");
 
 var textToSend = "日本語ABC橋。 髙﨑ｱｲｳ　～−①㈱";
 foreach (var initialMode in Enum.GetValues<InputMode>())

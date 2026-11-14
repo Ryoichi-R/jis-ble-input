@@ -11,7 +11,7 @@
         <PublishTrimmed>false</PublishTrimmed>
         <DebugType>none</DebugType>
         <AssemblyName>JisBleInput</AssemblyName>
-        <Version>1.15.0</Version>
+        <Version>1.20.1</Version>
         <Authors>Ryoichi-R</Authors>
         <Copyright>Copyright (c) 2026 Ryoichi-R and contributors</Copyright>
         <PackageLicenseExpression>MIT</PackageLicenseExpression>
@@ -37,8 +37,15 @@
             <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
             <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
         </Content>
-        <Content Include="../../samples/**/*">
-            <Link>samples/%(RecursiveDir)%(Filename)%(Extension)</Link>
+        <Content Include="../../samples/ascii-url.txt;../../samples/ascii-printable.txt;../../samples/multiline-crlf.txt;../../samples/multiline-lf.txt;../../samples/AC-08-100.txt;../../samples/AC-08-1000.txt">
+            <Link>samples/%(Filename)%(Extension)</Link>
+            <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+            <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+        </Content>
+    </ItemGroup>
+    <ItemGroup Condition="'$(RuntimeIdentifier)' == 'win-arm64'">
+        <Content Include="../../samples/xiao-japanese-trial.txt;../../samples/Compare-XiaoTrialText.ps1">
+            <Link>samples/%(Filename)%(Extension)</Link>
             <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
             <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
         </Content>

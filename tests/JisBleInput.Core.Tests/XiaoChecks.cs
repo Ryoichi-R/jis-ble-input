@@ -103,6 +103,49 @@ internal static class XiaoChecks
             try { await client.StartAsync(CancellationToken.None); check(false, "wrong session"); }
             catch (Exception error) when (error is IOException or OperationCanceledException) { check(channel.Disposed, "wrong-session response invalidates the link"); }
         }
+        var failedCommands = new (XiaoCommand Command, XiaoResult Result, bool KeepsUsb, bool Malformed)[]
+        {
+            (XiaoCommand.Arm, XiaoResult.NotReady, true, false),
+            (XiaoCommand.Report, XiaoResult.NotArmed, true, false),
+            (XiaoCommand.Report, XiaoResult.Rejected, true, false),
+            (XiaoCommand.PairingOpen, XiaoResult.Rejected, true, false),
+            (XiaoCommand.ClearBond, XiaoResult.StorageFailed, true, false),
+            (XiaoCommand.Report, XiaoResult.NotificationFailed, false, false),
+            (XiaoCommand.Report, XiaoResult.Busy, false, false),
+            (XiaoCommand.Report, XiaoResult.WrongGeneration, false, false),
+            (XiaoCommand.Arm, XiaoResult.StorageFailed, false, false),
+            (XiaoCommand.Arm, XiaoResult.NotReady, false, true)
+        };
+        foreach (var (command, result, keepsUsb, malformed) in failedCommands)
+        {
+            using var channel = new FakeChannel
+            {
+                TransformResponse = (request, state) => request == command
+                    ? malformed ? [(byte)result, 0] : [(byte)result]
+                    : state
+            };
+            using var client = new XiaoClient(channel);
+            await client.StartAsync(CancellationToken.None);
+            var payload = command == XiaoCommand.Report ? new byte[8] : [];
+            try
+            {
+                await client.RequestAsync(command, payload, client.Generation, CancellationToken.None);
+                check(false, $"surface {command}/{result}");
+            }
+            catch (Exception error) when (error is IOException || (malformed && error is OperationCanceledException))
+            {
+                check(channel.Disposed != keepsUsb && channel.Commands.Count(item => item == command) == 1,
+                    $"{command}/{result} malformed={malformed} follows USB failure handling without retry");
+            }
+            if (keepsUsb)
+            {
+                await client.RequestAsync(command == XiaoCommand.ClearBond ? XiaoCommand.Status : XiaoCommand.Release,
+                    [], client.Generation, CancellationToken.None);
+                check(!channel.Disposed && channel.Sequences.SequenceEqual(
+                        Enumerable.Range(0, channel.Sequences.Count).Select(index => (uint)index)),
+                    $"{command}/{result} accepts cleanup or status in the same USB session");
+            }
+        }
         var invalidSuccesses = new (XiaoCommand Command, byte[] Payload, Func<byte[], byte[]> Reply)[]
         {
             (XiaoCommand.Arm, [], _ => [0]),

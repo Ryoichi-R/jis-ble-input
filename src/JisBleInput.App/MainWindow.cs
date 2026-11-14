@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
@@ -12,7 +13,38 @@ namespace JisBleInput.App;
 
 internal sealed class MainWindow : Window
 {
-    private IKeyboardConnection bluetooth = new LocalBleConnection();
+    private const string ExperimentalAsciiSpeedLabel = "試験：XIAO最速と同じ待ち（3 ms＋2 ms）";
+    private const string ExperimentalJapaneseSpeedLabel = "試験：XIAO最速と同じ設定（待ち合計 25 ms/字）";
+    private static readonly IReadOnlyList<string> LocalAsciiSpeeds =
+        [.. InputSettings.SpeedLabels(TextInputMode.Ascii), ExperimentalAsciiSpeedLabel];
+    private static readonly IReadOnlyList<string> LocalJapaneseSpeeds =
+        [.. InputSettings.SpeedLabels(TextInputMode.Japanese), ExperimentalJapaneseSpeedLabel];
+    private readonly HashSet<TextInputMode> experimentalBluetoothSpeeds = [];
+    private static readonly (string Label, JapaneseSpeed Speed)[] MacJapanesePresets =
+    [
+        ("標準（待ち 615 ms/字）", JapaneseSpeed.SlightlyFaster),
+        ("速い（待ち 420 ms/字）", JapaneseSpeed.Faster),
+        ("さらに速い（待ち 280 ms/字）", JapaneseSpeed.XiaoFastest),
+        ("最速（待ち 140 ms/字）", JapaneseSpeed.MacUnicodeHexFastest),
+        ("高速試験（待ち 70 ms/字）", JapaneseSpeed.MacUnicodeHexHighSpeedTrial)
+    ];
+    private static readonly IReadOnlyList<string> MacJapaneseSpeeds = MacJapanesePresets.Select(preset => preset.Label).ToArray();
+    private int macJapaneseSpeedIndex;
+    private readonly ComboBox japaneseReceiver = new()
+    {
+        Name = "JapaneseReceiver",
+        ItemsSource = new[] { "Windows（Microsoft IME）", "Mac（Unicode Hex Input）" },
+        SelectedIndex = 0,
+        MinHeight = 30
+    };
+    private readonly TextBlock macInputHelp = new()
+    {
+        Text = "MacでF18を「Unicode 16進数入力」に割り当ててください。本文の送信前にF18を自動で送ります。",
+        TextWrapping = TextWrapping.Wrap,
+        Visibility = Visibility.Collapsed
+    };
+
+    private IKeyboardConnection bluetooth;
     private readonly StagedSender sender;
     private readonly InputSettings inputSettings = new();
     private readonly ConnectionPreferencesStore connectionStore;
@@ -23,14 +55,16 @@ internal sealed class MainWindow : Window
     private string? presetRecoveryNotice;
     private readonly TransportPreferencesStore transportStore;
     private TransportPreferences transportPreferences = new();
+    private readonly bool xiaoAvailable;
+    private readonly Func<XiaoSerialKeyboard> createXiao;
     private readonly bool useConnectionHooks;
     private CancellationTokenSource? transferCancellation;
-    private readonly ComboBox connectionMethod = new() { Name = "ConnectionMethod", ItemsSource = new[] { "PC内蔵Bluetooth", "XIAO（USB接続）" }, MinHeight = 30 };
+    private readonly ComboBox connectionMethod = new() { Name = "ConnectionMethod", MinHeight = 30 };
     private readonly ComboBox usbPorts = new() { Name = "XiaoPorts", DisplayMemberPath = "Display", MinHeight = 30 };
     private readonly Button clearXiaoBond = Button("基板の登録を解除");
     private bool updatingTransport;
     private bool preparingTransfer;
-    private bool stoppingByUser;
+    private bool stoppingTransfer;
     // Board of the last successful XIAO USB link; null means no automatic USB reconnection.
     private string? xiaoLinkBoard;
     // Destination the user chose in this run; restored after a brief link drop.
@@ -123,19 +157,31 @@ internal sealed class MainWindow : Window
 
     public MainWindow(bool autoStartBluetooth = true, string? preferencesDirectory = null,
         IReportTransport? reportTransport = null, IKeyboardConnection? keyboardConnection = null)
+        : this(RuntimeInformation.ProcessArchitecture, autoStartBluetooth, preferencesDirectory, reportTransport, keyboardConnection)
+    {
+    }
+
+    internal MainWindow(Architecture architecture, bool autoStartBluetooth, string? preferencesDirectory,
+        IReportTransport? reportTransport = null, IKeyboardConnection? keyboardConnection = null,
+        Func<XiaoSerialKeyboard>? createXiao = null)
     {
         if (reportTransport is not null && autoStartBluetooth)
             throw new ArgumentException("代替transportを使う場合はBluetoothの自動開始を無効にしてください。");
+        xiaoAvailable = ConnectionAvailability.IsAvailable(architecture, ConnectionMethod.XiaoUsb);
+        this.createXiao = createXiao ?? (() => new XiaoSerialKeyboard());
+        if (!xiaoAvailable && keyboardConnection is { UsesLocalBluetooth: false })
+            throw new ArgumentException("このプロセスではXIAO方式を利用できません。", nameof(keyboardConnection));
         var preferencesRoot = preferencesDirectory ?? Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "JisBleInput");
         transportStore = new TransportPreferencesStore(Path.Combine(preferencesRoot, "transport-preferences.json"));
         try { transportPreferences = transportStore.Load(); }
         catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException or JsonException)
         { message.Text = "送信方式の設定を読み込めませんでした。方式を選び直してください。"; }
-        bluetooth.Dispose();
-        bluetooth = keyboardConnection ?? (transportPreferences.Method == ConnectionMethod.XiaoUsb ? new XiaoSerialKeyboard() : new LocalBleConnection());
+        var savedXiaoUnavailable = !xiaoAvailable && transportPreferences.Method == ConnectionMethod.XiaoUsb;
+        bluetooth = keyboardConnection ?? CreateConnection(xiaoAvailable ? transportPreferences.Method : ConnectionMethod.LocalBluetooth);
         useConnectionHooks = reportTransport is null;
         sender = new StagedSender(reportTransport ?? new SelectedConnectionTransport(() => bluetooth));
+        connectionMethod.ItemsSource = xiaoAvailable ? new[] { "PC内蔵Bluetooth", "XIAO（USB接続）" } : new[] { "PC内蔵Bluetooth" };
         connectionMethod.SelectedIndex = bluetooth.UsesLocalBluetooth ? 0 : 1;
         connectionStore = new ConnectionPreferencesStore(Path.Combine(preferencesRoot, "connection-preferences.json"));
         try { connectionPreferences = connectionStore.Load(); }
@@ -165,6 +211,8 @@ internal sealed class MainWindow : Window
             presetsReadable = false;
             message.Text = "定型文を読み込めませんでした。保存ファイルを確認してください。";
         }
+        if (savedXiaoUnavailable)
+            message.Text = "保存済みのXIAO設定は保持されます。この版は内蔵Bluetoothを使います。送信先PCを確認してください。";
         Title = $"JIS BLE Input {typeof(MainWindow).Assembly.GetName().Version?.ToString(3)}";
         Icon = AppIcon.CreateWindowIcon();
         Width = 440;
@@ -322,8 +370,23 @@ internal sealed class MainWindow : Window
         inputSpeed.SelectionChanged += (_, _) =>
         {
             if (updatingSettings || inputSpeed.SelectedIndex < 0) return;
-            inputSettings.SetSpeed(inputSpeed.SelectedIndex, !bluetooth.UsesLocalBluetooth);
-            SaveInputPreferences();
+            if (UsesMacJapaneseInput)
+            {
+                macJapaneseSpeedIndex = inputSpeed.SelectedIndex;
+                UpdateMode();
+                return;
+            }
+            var useXiao = !bluetooth.UsesLocalBluetooth;
+            var mode = inputSettings.Mode;
+            var trialSelected = !useXiao && inputSpeed.SelectedIndex == BluetoothSpeedLabels(mode).Count - 1;
+            if (trialSelected)
+                experimentalBluetoothSpeeds.Add(mode);
+            else
+            {
+                if (!useXiao) experimentalBluetoothSpeeds.Remove(mode);
+                inputSettings.SetSpeed(inputSpeed.SelectedIndex, useXiao);
+                SaveInputPreferences();
+            }
             UpdateMode();
         };
         receiverLayout.SelectionChanged += (_, _) =>
@@ -333,6 +396,7 @@ internal sealed class MainWindow : Window
             SaveInputPreferences();
             UpdateMode();
         };
+        japaneseReceiver.SelectionChanged += (_, _) => UpdateMode();
         statusTimer.Tick += (_, _) =>
         {
             if (closing) return;
@@ -372,13 +436,13 @@ internal sealed class MainWindow : Window
             }
             UpdateButtons();
         };
-        autoReconnect.ToolTip = "XIAO方式では、USB通信が切れたときの自動再接続にも使います。";
+        if (xiaoAvailable) autoReconnect.ToolTip = "XIAO方式では、USB通信が切れたときの自動再接続にも使います。";
         autoReconnect.Checked += (_, _) => SetAutoReconnect(true);
         autoReconnect.Unchecked += (_, _) => SetAutoReconnect(false);
         connectionMethod.SelectionChanged += async (_, _) => { if (!updatingTransport) await ChangeConnectionMethodAsync(); };
         usbPorts.SelectionChanged += (_, _) =>
         {
-            if (updatingTransport || bluetooth is not XiaoSerialKeyboard xiao || working || xiao.IsStarted) return;
+            if (!xiaoAvailable || updatingTransport || bluetooth is not XiaoSerialKeyboard xiao || working || xiao.IsStarted) return;
             var selectedPort = usbPorts.SelectedItem as XiaoUsbPort;
             if (selectedPort is { Connectable: false })
             {
@@ -392,7 +456,7 @@ internal sealed class MainWindow : Window
         };
         clearXiaoBond.Click += async (_, _) =>
         {
-            if (working || bluetooth is not XiaoSerialKeyboard xiao || !xiao.IsStarted) return;
+            if (!xiaoAvailable || working || bluetooth is not XiaoSerialKeyboard xiao || !xiao.IsStarted) return;
             if (MessageBox.Show(this, "選択中のXIAO基板に保存されたPC登録1件を解除します。相手PCでもこの基板の登録を削除してから再登録してください。", "基板の登録解除", MessageBoxButton.OKCancel) != MessageBoxResult.OK) return;
             working = true; starting = true; UpdateButtons();
             try { operation = xiao.ClearBondAsync(lifetime.Token); await operation; sessionPeerId = null; }
@@ -434,8 +498,7 @@ internal sealed class MainWindow : Window
             if (bluetooth.UsesLocalBluetooth) CancelTransfer();
             else
             {
-                stoppingByUser = true;
-                sender.Cancel(finishCurrentWrite: true);
+                RequestXiaoStop();
                 message.Text = "XIAOの応答を待って停止しています…";
                 UpdateButtons();
             }
@@ -462,11 +525,25 @@ internal sealed class MainWindow : Window
         sender.Cancel();
     }
 
+    private void RequestXiaoStop()
+    {
+        stoppingTransfer = true;
+        sender.Cancel(finishCurrentWrite: true);
+    }
+
     private void SaveTransportPreferences()
     {
+        if (!xiaoAvailable) return;
         try { transportStore.Save(transportPreferences); }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         { message.Text = "送信方式を保存できませんでした。次回は選び直してください。"; }
+    }
+
+    private IKeyboardConnection CreateConnection(ConnectionMethod method)
+    {
+        if (method == ConnectionMethod.LocalBluetooth) return new LocalBleConnection();
+        if (!xiaoAvailable) throw new InvalidOperationException("このプロセスではXIAO方式を利用できません。");
+        return createXiao();
     }
 
     internal static string XiaoPortHint(XiaoUsbPort port) => port.Kind == XiaoPortKind.Bootloader
@@ -475,7 +552,7 @@ internal sealed class MainWindow : Window
 
     private void DiscoverXiaoPorts()
     {
-        if (bluetooth is not XiaoSerialKeyboard xiao || xiao.IsStarted) return;
+        if (!xiaoAvailable || bluetooth is not XiaoSerialKeyboard xiao || xiao.IsStarted) return;
         updatingTransport = true;
         try
         {
@@ -505,6 +582,7 @@ internal sealed class MainWindow : Window
 
     private async Task ChangeConnectionMethodAsync()
     {
+        if (!xiaoAvailable) return;
         var nextMethod = connectionMethod.SelectedIndex == 1 ? ConnectionMethod.XiaoUsb : ConnectionMethod.LocalBluetooth;
         if (working || closing || (nextMethod == ConnectionMethod.LocalBluetooth) == bluetooth.UsesLocalBluetooth)
         {
@@ -527,7 +605,7 @@ internal sealed class MainWindow : Window
             bluetooth.Dispose();
             xiaoLinkBoard = null;
             sessionPeerId = null;
-            bluetooth = nextMethod == ConnectionMethod.XiaoUsb ? new XiaoSerialKeyboard() : new LocalBleConnection();
+            bluetooth = CreateConnection(nextMethod);
             AttachConnectionEvents();
             transportPreferences = transportPreferences with { Method = nextMethod };
             SaveTransportPreferences();
@@ -539,7 +617,7 @@ internal sealed class MainWindow : Window
             // ExitDisconnect can already have disposed the old GATT service.
             // Recreate a stopped facade so a later retry can recover.
             bluetooth.Dispose();
-            bluetooth = transportPreferences.Method == ConnectionMethod.XiaoUsb ? new XiaoSerialKeyboard() : new LocalBleConnection();
+            bluetooth = CreateConnection(transportPreferences.Method);
             AttachConnectionEvents();
             message.Text = error.Message;
         }
@@ -562,8 +640,11 @@ internal sealed class MainWindow : Window
         var panel = new StackPanel { Margin = new Thickness(14) };
         panel.Children.Add(new TextBlock { Text = "接続", FontWeight = FontWeights.SemiBold });
         panel.Children.Add(Choice("送信方式", connectionMethod));
-        panel.Children.Add(Choice("USB接続したXIAO Sense", usbPorts));
-        panel.Children.Add(clearXiaoBond);
+        if (xiaoAvailable)
+        {
+            panel.Children.Add(Choice("USB接続したXIAO Sense", usbPorts));
+            panel.Children.Add(clearXiaoBond);
+        }
         var connectionButtons = new WrapPanel();
         connectionButtons.Children.Add(start);
         connectionButtons.Children.Add(retryBluetooth);
@@ -571,8 +652,11 @@ internal sealed class MainWindow : Window
         panel.Children.Add(connectionButtons);
         panel.Children.Add(autoReconnect);
         panel.Children.Add(connection);
+        panel.Children.Add(Choice("日本語の受信側", japaneseReceiver));
+        panel.Children.Add(macInputHelp);
         panel.Children.Add(Choice("受信PCの配列（英数字モード）", receiverLayout));
         prepareIme.Margin = new Thickness(0, 10, 0, 0);
+        prepareIme.Name = "PrepareInputButton";
         panel.Children.Add(prepareIme);
         panel.Children.Add(caps);
         managePresets.Name = "ManagePresetsButton";
@@ -603,7 +687,7 @@ internal sealed class MainWindow : Window
         var draft = new TextPreset("", editor.Text, inputSettings.Mode,
             useXiao ? null : inputSettings.GetSpeedIndex(),
             useXiao ? inputSettings.GetSpeedIndex(useXiao: true) : null);
-        var manager = new TextPresetsWindow(settingsWindow, presetStore, presets, draft, index, presetRecoveryNotice);
+        var manager = new TextPresetsWindow(settingsWindow, presetStore, presets, draft, index, presetRecoveryNotice, xiaoAvailable);
         manager.ShowDialog();
         presets = manager.Presets;
         presetRecoveryNotice = manager.RecoveryNotice;
@@ -617,6 +701,7 @@ internal sealed class MainWindow : Window
         if (editor.Text.Length > 0 && editor.Text != preset.Text && !confirmReplace()) return false;
         if (working || closing || composition) return false;
         var useXiao = !bluetooth.UsesLocalBluetooth;
+        if (!useXiao) experimentalBluetoothSpeeds.Remove(preset.Mode);
         inputSettings.SetMode(preset.Mode);
         if ((useXiao ? preset.XiaoSpeed : preset.BluetoothSpeed) is int speed)
             inputSettings.SetSpeed(speed, useXiao);
@@ -689,7 +774,7 @@ internal sealed class MainWindow : Window
 
     private async Task StartBluetoothAsync(bool newPairing, bool automatic = false)
     {
-        if (closing || working) return;
+        if (closing || working || (!xiaoAvailable && !bluetooth.UsesLocalBluetooth)) return;
         attemptedStart = true;
         starting = true;
         working = true;
@@ -709,9 +794,18 @@ internal sealed class MainWindow : Window
                 ? "広告要求は開始しましたが、一部の広告データが省略されています。PC接続の成立は接続先一覧で確認してください。"
                 : newPairing ? "新しいPCのペアリングを受け付けています。受信PCのBluetooth設定から追加してください。"
                 : "広告を開始し、PCからの接続を待っています。前回のPCの接続・購読が戻ると送信先を復帰します。";
-            if (bluetooth is XiaoSerialKeyboard { IsStarted: true } linked) xiaoLinkBoard = linked.Port?.Hash;
+            RememberConnectedXiao();
             if (automatic) connection.Text = "XIAOに自動で再接続しました。受信側のキー状態を確認してから送信してください。";
             await bluetooth.RefreshHostsAsync();
+        }
+        catch (XiaoSerialKeyboard.AlreadyBondedException error) when (bluetooth.IsStarted)
+        {
+            if (!closing)
+            {
+                connection.Text = $"XIAOはUSB接続済みです。{error.Message}";
+                startupDetails.Text = $"接続診断: {bluetooth.Diagnostic}";
+                message.Text = connection.Text;
+            }
         }
         catch (OperationCanceledException)
         {
@@ -727,6 +821,12 @@ internal sealed class MainWindow : Window
                     ? $"XIAOへ自動で再接続できませんでした。{error.Message}"
                     : "XIAOへの自動再接続を数秒おきに試しています。";
             }
+            else if (!closing && !bluetooth.UsesLocalBluetooth && bluetooth.IsStarted)
+            {
+                connection.Text = "XIAOはUSB接続済みです。";
+                startupDetails.Text = $"接続診断: {bluetooth.Diagnostic} / {error.Message}";
+                message.Text = $"XIAOのUSB接続は維持されています。{error.Message}";
+            }
             else if (!closing)
             {
                 connection.Text = "接続待ちを開始できませんでした。「再接続」を押せます。";
@@ -736,6 +836,7 @@ internal sealed class MainWindow : Window
         }
         finally
         {
+            RememberConnectedXiao();
             operation = null;
             starting = false;
             working = false;
@@ -743,10 +844,15 @@ internal sealed class MainWindow : Window
         }
     }
 
+    private void RememberConnectedXiao()
+    {
+        if (bluetooth is XiaoSerialKeyboard { IsStarted: true, Port: { } port }) xiaoLinkBoard = port.Hash;
+    }
+
     // After a USB fault the session is gone; HELLO starts a new one and discards any earlier ARM.
     internal async Task TryReconnectXiaoAsync()
     {
-        if (closing || working || xiaoLinkBoard is null || !connectionPreferences.AutoReconnect
+        if (!xiaoAvailable || closing || working || xiaoLinkBoard is null || !connectionPreferences.AutoReconnect
             || bluetooth is not XiaoSerialKeyboard xiao || xiao.IsStarted) return;
         XiaoUsbPort? port;
         try
@@ -771,7 +877,7 @@ internal sealed class MainWindow : Window
 
     internal async Task SendToAsync(SendTarget destination, bool prepareOnly = false)
     {
-        if (working || closing) return;
+        if (working || closing || (prepareOnly && UsesMacJapaneseInput)) return;
         var options = SelectedOptions();
         TextSnapshot? snapshot;
         try
@@ -786,7 +892,7 @@ internal sealed class MainWindow : Window
         transferCancellation = cancellation;
         working = true;
         preparingTransfer = true;
-        stoppingByUser = false;
+        stoppingTransfer = false;
         var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         operation = completed.Task;
         UpdateButtons();
@@ -802,7 +908,7 @@ internal sealed class MainWindow : Window
                 await bluetooth.BeginSendAsync(destination, cancellation.Token);
             }
             cancellation.Token.ThrowIfCancellationRequested();
-            if (stoppingByUser)
+            if (stoppingTransfer)
             {
                 message.Text = "送信開始前に停止しました。";
                 return;
@@ -813,9 +919,8 @@ internal sealed class MainWindow : Window
             await transfer;
             message.Text = sender.State switch
             {
-                SendState.Ready => options.Mode == TextInputMode.Ascii
-                    ? "受信側のIMEオフ（A）を確認してください。"
-                    : "受信側が「あ」になったか確認してください。",
+                SendState.Ready when options.Mode == TextInputMode.Ascii => "受信側のIMEオフ（A）を確認してください。",
+                SendState.Ready => "受信側が「あ」になったか確認してください。",
                 SendState.KeysSent => "キー列を送信しました。受信側で文章を確認してください。",
                 _ => "途中停止しました。一部入力・意図しない確定の可能性があります。受信側を確認してください。自動削除・再送はしません。"
             };
@@ -857,7 +962,7 @@ internal sealed class MainWindow : Window
             TransferKeepAwake.End();
             working = false;
             preparingTransfer = false;
-            stoppingByUser = false;
+            stoppingTransfer = false;
             transferCancellation = null;
             operation = null;
             activeTarget = null;
@@ -866,25 +971,56 @@ internal sealed class MainWindow : Window
         }
     }
 
-    private SendOptions SelectedOptions() => inputSettings.Capture(!bluetooth.UsesLocalBluetooth);
+    internal SendOptions SelectedOptions()
+    {
+        var useXiao = !bluetooth.UsesLocalBluetooth;
+        var options = inputSettings.Capture(useXiao);
+        if (UsesMacJapaneseInput)
+            return options with
+            {
+                JapaneseInput = JapaneseInputMethod.MacUnicodeHex,
+                Speed = MacJapanesePresets[macJapaneseSpeedIndex].Speed
+            };
+        if (useXiao || !experimentalBluetoothSpeeds.Contains(options.Mode)) return options;
+        return options.Mode == TextInputMode.Ascii
+            ? options with { DirectSpeed = AsciiSpeed.XiaoFastest }
+            : options with { Speed = JapaneseSpeed.XiaoFastest };
+    }
+
+    private static IReadOnlyList<string> BluetoothSpeedLabels(TextInputMode mode) =>
+        mode == TextInputMode.Ascii ? LocalAsciiSpeeds : LocalJapaneseSpeeds;
+
+    private bool UsesMacJapaneseInput => bluetooth.UsesLocalBluetooth
+        && inputSettings.Mode == TextInputMode.Japanese && japaneseReceiver.SelectedIndex == 1;
 
     private void UpdateMode()
     {
         var useXiao = !bluetooth.UsesLocalBluetooth;
+        var useMac = UsesMacJapaneseInput;
+        var speedLabels = useXiao ? InputSettings.SpeedLabels(inputSettings.Mode, useXiao: true) : BluetoothSpeedLabels(inputSettings.Mode);
+        if (useMac) speedLabels = MacJapaneseSpeeds;
+        var experimental = !useXiao && !useMac && experimentalBluetoothSpeeds.Contains(inputSettings.Mode);
         updatingSettings = true;
         try
         {
             inputMode.SelectedIndex = inputSettings.Mode == TextInputMode.Ascii ? 1 : 0;
-            inputSpeed.ItemsSource = InputSettings.SpeedLabels(inputSettings.Mode, useXiao);
-            inputSpeed.SelectedIndex = inputSettings.GetSpeedIndex(useXiao);
+            inputSpeed.ItemsSource = speedLabels;
+            inputSpeed.SelectedIndex = useMac ? macJapaneseSpeedIndex
+                : experimental ? speedLabels.Count - 1 : inputSettings.GetSpeedIndex(useXiao);
             receiverLayout.SelectedIndex = inputSettings.Layout == ReceiverKeyboardLayout.EnglishUs ? 1 : 0;
         }
         finally { updatingSettings = false; }
-        var description = inputSettings.Describe(useXiao);
-        modeHelp.Text = useXiao
+        var description = useMac
+            ? $"Mac（Unicode Hex Input） / {speedLabels[macJapaneseSpeedIndex]}"
+            : experimental ? speedLabels[^1] : inputSettings.Describe(useXiao);
+        modeHelp.Text = useMac
+            ? $"現在の設定: {description}。数値は1文字あたりのキー間隔の設定値の合計です。Windowsの待機精度・Bluetooth通信・F18の切り替えで実際の送信にはさらに時間がかかります。"
+            : experimental
+            ? $"現在の設定: {description}。数値はキー間隔の設定値です。Windowsの待機精度と通信で実際の送信にはさらに時間がかかります。終了すると保存済みの速度に戻ります。"
+            : useXiao
             ? $"現在の設定: {description}。速度は模擬通信での目安です。USB・BLEの待ち時間は別途加わります。"
             : $"現在の設定: {description}。通信の待ち時間は別途加わります。";
-        inputSpeed.ToolTip = description;
+        inputSpeed.ToolTip = useMac || experimental ? modeHelp.Text : description;
         UpdateButtons();
     }
 
@@ -915,9 +1051,10 @@ internal sealed class MainWindow : Window
         finally { updatingHosts = false; }
         if (hosts.SelectedItem is null && selectedId is not null) bluetooth.Select(null);
         caps.Text = bluetooth.CapsLock switch { true => "CapsLock: オン（送信不可）", false => "CapsLock: オフ", null => "CapsLock: 未取得（手動確認）" };
-        if (activeTarget is not null && !bluetooth.IsReady(activeTarget))
+        if (activeTarget is not null && !stoppingTransfer && !bluetooth.IsReady(activeTarget))
         {
-            CancelTransfer();
+            if (bluetooth.UsesLocalBluetooth) CancelTransfer();
+            else RequestXiaoStop();
             message.Text = "接続先またはキー状態が変わりました。途中入力・キー解放は受信側で確認してください。自動再送はしません。";
         }
         UpdateButtons();
@@ -927,7 +1064,7 @@ internal sealed class MainWindow : Window
     {
         var ready = !closing && bluetooth.IsStarted && bluetooth.Target is { } target && bluetooth.IsReady(target);
         settings.IsEnabled = !closing;
-        connectionMethod.IsEnabled = !closing && !working;
+        connectionMethod.IsEnabled = xiaoAvailable && !closing && !working;
         usbPorts.IsEnabled = !closing && !working && !bluetooth.IsStarted;
         usbPorts.Visibility = clearXiaoBond.Visibility = bluetooth.UsesLocalBluetooth ? Visibility.Collapsed : Visibility.Visible;
         clearXiaoBond.IsEnabled = !closing && !working && bluetooth.IsStarted;
@@ -939,8 +1076,12 @@ internal sealed class MainWindow : Window
         hosts.IsEnabled = !closing && !working;
         inputMode.IsEnabled = !closing && !working;
         inputSpeed.IsEnabled = !closing && !working;
+        japaneseReceiver.IsEnabled = !closing && !working && bluetooth.UsesLocalBluetooth && inputSettings.Mode == TextInputMode.Japanese;
+        macInputHelp.Visibility = UsesMacJapaneseInput ? Visibility.Visible : Visibility.Collapsed;
         receiverLayout.IsEnabled = !closing && !working && SelectedOptions().Mode == TextInputMode.Ascii;
-        prepareIme.IsEnabled = !closing && !working && bluetooth.Target is { } destination && bluetooth.IsReady(destination);
+        prepareIme.Visibility = UsesMacJapaneseInput ? Visibility.Collapsed : Visibility.Visible;
+        prepareIme.IsEnabled = !UsesMacJapaneseInput && !closing && !working
+            && bluetooth.Target is { } destination && bluetooth.IsReady(destination);
         ApplyTransferControls(sender.State, working, starting, ready);
         if (preparingTransfer) { pause.Visibility = Visibility.Collapsed; send.Content = "送信準備中"; }
         hostPlaceholder.Visibility = hosts.SelectedItem is null ? Visibility.Visible : Visibility.Collapsed;
@@ -966,7 +1107,7 @@ internal sealed class MainWindow : Window
         loadPreset.IsEnabled = presetChoice.IsEnabled && presetChoice.SelectedIndex > 0;
         pause.IsEnabled = !closing && isWorking && state == SendState.Sending;
         resume.IsEnabled = !closing && targetReady && isWorking && paused;
-        stop.IsEnabled = !closing && !isStarting && isWorking && !stoppingByUser;
+        stop.IsEnabled = !closing && !isStarting && isWorking && !stoppingTransfer;
         send.Visibility = paused ? Visibility.Collapsed : Visibility.Visible;
         send.Content = isWorking ? "送信中" : "送信";
         resume.Visibility = paused ? Visibility.Visible : Visibility.Collapsed;
@@ -1048,11 +1189,10 @@ internal sealed class MainWindow : Window
     internal async Task StopAfterUnexpectedErrorAsync()
     {
         closing = true;
-        stoppingByUser = true;
         try
         {
             if (bluetooth.UsesLocalBluetooth) CancelTransfer();
-            else sender.Cancel(finishCurrentWrite: true);
+            else RequestXiaoStop();
             if (operation is { } pending) await pending.WaitAsync(TimeSpan.FromSeconds(3));
         }
         finally
@@ -1101,7 +1241,7 @@ internal sealed class MainWindow : Window
             return;
         }
         var hostConnected = bluetooth.HasConnectedHost;
-        if (hostConnected) connection.Text = "受信PCとの接続を切ってから終了します（SurfaceのBluetoothを数秒オフにします）…";
+        if (hostConnected) connection.Text = "受信PCとの接続を切ってから終了します（送信PCのBluetoothを数秒オフにします）…";
         var radio = new BluetoothRadioSwitch();
         ExitDisconnectResult result;
         try

@@ -10,6 +10,7 @@ internal sealed class TextPresetsWindow : Window
 {
     private readonly TextPresetStore store;
     private readonly TextPreset draft;
+    private readonly bool xiaoAvailable;
     private readonly ComboBox entries = new() { Name = "PresetEntries", MinHeight = 30 };
     private readonly TextBox displayName = new() { Name = "PresetName", MaxLength = 80 };
     private readonly TextBox text = new()
@@ -20,7 +21,7 @@ internal sealed class TextPresetsWindow : Window
         VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
         Height = 94
     };
-    private readonly ComboBox mode = new() { ItemsSource = new[] { "日本語・混在文", "英数字・URL" } };
+    private readonly ComboBox mode = new() { Name = "PresetMode", ItemsSource = new[] { "日本語・混在文", "英数字・URL" } };
     private readonly ComboBox localSpeed = new();
     private readonly ComboBox xiaoSpeed = new();
     private readonly TextBlock feedback = new() { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 8, 0, 0) };
@@ -32,11 +33,12 @@ internal sealed class TextPresetsWindow : Window
     internal string? RecoveryNotice { get; private set; }
 
     internal TextPresetsWindow(Window owner, TextPresetStore store, TextPreset[] presets, TextPreset draft, int selectedIndex,
-        string? recoveryNotice)
+        string? recoveryNotice, bool xiaoAvailable)
     {
         Owner = owner;
         this.store = store;
         this.draft = draft;
+        this.xiaoAvailable = xiaoAvailable;
         Presets = presets;
         RecoveryNotice = recoveryNotice;
         Title = "JIS BLE Input — 定型文の管理";
@@ -75,7 +77,8 @@ internal sealed class TextPresetsWindow : Window
         AddField(xiao, "XIAOの速度", xiaoSpeed);
         AddField(local, "内蔵Bluetoothの速度", localSpeed);
         Grid.SetColumn(local, 1);
-        speeds.Children.Add(xiao);
+        if (xiaoAvailable) speeds.Children.Add(xiao);
+        else Grid.SetColumnSpan(local, 2);
         speeds.Children.Add(local);
         panel.Children.Add(speeds);
         panel.Children.Add(new TextBlock
@@ -150,11 +153,14 @@ internal sealed class TextPresetsWindow : Window
 
     private void SaveEntry()
     {
+        var index = entries.SelectedIndex - 1;
+        var xiaoSelection = xiaoAvailable
+            ? (xiaoSpeed.SelectedIndex > 0 ? xiaoSpeed.SelectedIndex - 1 : (int?)null)
+            : (index >= 0 ? Presets[index].XiaoSpeed : draft.XiaoSpeed);
         var preset = new TextPreset(displayName.Text.Trim(), text.Text, (TextInputMode)mode.SelectedIndex,
             localSpeed.SelectedIndex > 0 ? localSpeed.SelectedIndex - 1 : null,
-            xiaoSpeed.SelectedIndex > 0 ? xiaoSpeed.SelectedIndex - 1 : null);
+            xiaoSelection);
         var next = Presets.ToList();
-        var index = entries.SelectedIndex - 1;
         if (index < 0) { index = next.Count; next.Add(preset); }
         else next[index] = preset;
         Save(next, index + 1, "定型文を保存しました。");
