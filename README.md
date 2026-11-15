@@ -8,6 +8,11 @@
 
 送信側のCPUに合うWindows ZIP（`win-x64`または`win-arm64`）を使用します。両方に.NET 10.0.14を同梱します。内蔵方式には送信側のBLE Peripheral対応が必要です。受信側はBluetoothキーボードを接続できるWindowsと既存のキーボード・マウスを用意してください。日本語入力はMicrosoft IMEのローマ字入力を前提とします。
 
+## macOSからWindowsに送信する
+
+Mac版0.20.0は、内蔵BluetoothでWindowsに半角英数字・記号・改行を最大5,000文字まで送信します。
+ソース、起動方法、macOSでのビルド手順は [Mac版 README](src/JisBleInput.Mac/README.md) を参照してください。
+
 ## Macで日本語・混在文を受信する
 
 Macの「システム設定」→「キーボード」→「テキスト入力」の「編集」から「Unicode 16進数入力」を追加します。Windowsの送信アプリでは「日本語・混在文」を選び、「設定」の「日本語の受信側」を「Mac（Unicode Hex Input）」に切り替えます。Macで受信する入力欄にカーソルを置き、最初は標準速度で短文を送ります。
