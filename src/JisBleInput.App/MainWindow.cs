@@ -396,7 +396,14 @@ internal sealed class MainWindow : Window
             SaveInputPreferences();
             UpdateMode();
         };
-        japaneseReceiver.SelectionChanged += (_, _) => UpdateMode();
+        japaneseReceiver.SelectionChanged += (_, _) =>
+        {
+            if (updatingSettings || japaneseReceiver.SelectedIndex < 0) return;
+            inputSettings.SetJapaneseInput(japaneseReceiver.SelectedIndex == 1
+                ? JapaneseInputMethod.MacUnicodeHex : JapaneseInputMethod.MicrosoftIme);
+            SaveInputPreferences();
+            UpdateMode();
+        };
         statusTimer.Tick += (_, _) =>
         {
             if (closing) return;
@@ -991,7 +998,7 @@ internal sealed class MainWindow : Window
         mode == TextInputMode.Ascii ? LocalAsciiSpeeds : LocalJapaneseSpeeds;
 
     private bool UsesMacJapaneseInput => bluetooth.UsesLocalBluetooth
-        && inputSettings.Mode == TextInputMode.Japanese && japaneseReceiver.SelectedIndex == 1;
+        && inputSettings.Mode == TextInputMode.Japanese && inputSettings.JapaneseInput == JapaneseInputMethod.MacUnicodeHex;
 
     private void UpdateMode()
     {
@@ -1004,6 +1011,7 @@ internal sealed class MainWindow : Window
         try
         {
             inputMode.SelectedIndex = inputSettings.Mode == TextInputMode.Ascii ? 1 : 0;
+            japaneseReceiver.SelectedIndex = inputSettings.JapaneseInput == JapaneseInputMethod.MacUnicodeHex ? 1 : 0;
             inputSpeed.ItemsSource = speedLabels;
             inputSpeed.SelectedIndex = useMac ? macJapaneseSpeedIndex
                 : experimental ? speedLabels.Count - 1 : inputSettings.GetSpeedIndex(useXiao);

@@ -1001,7 +1001,7 @@ Check(inputStore.Load() == new InputPreferences() && !Directory.Exists(inputRoot
 Directory.CreateDirectory(inputRoot);
 File.WriteAllText(inputPath, """{"Version":1,"Mode":"Ascii","JapaneseSpeed":"Faster","AsciiSpeed":"Relaxed","Layout":"EnglishUs"}""");
 Check(inputStore.Load() == new InputPreferences(Mode: TextInputMode.Ascii, JapaneseSpeed: JapaneseSpeed.Faster,
-    AsciiSpeed: AsciiSpeed.Relaxed, Layout: us), "a legacy file preserves its settings and defaults new XIAO presets to standard");
+    AsciiSpeed: AsciiSpeed.Relaxed, Layout: us), "a legacy file preserves its settings and defaults the Japanese receiver to Windows");
 var closedSettings = new InputSettings();
 closedSettings.SetSpeed(2);
 closedSettings.SetSpeed(2, useXiao: true);
@@ -1009,16 +1009,18 @@ closedSettings.SetMode(TextInputMode.Ascii);
 closedSettings.SetSpeed(0);
 closedSettings.SetSpeed(0, useXiao: true);
 closedSettings.SetLayout(us);
+closedSettings.SetJapaneseInput(JapaneseInputMethod.MacUnicodeHex);
 inputStore.Save(closedSettings.ToPreferences());
 var reopenedSettings = new InputSettings();
 reopenedSettings.Restore(new InputPreferencesStore(inputPath).Load());
 Check(reopenedSettings.Capture() == closedSettings.Capture() && reopenedSettings.Mode == TextInputMode.Ascii
+    && reopenedSettings.JapaneseInput == JapaneseInputMethod.MacUnicodeHex
     && reopenedSettings.Capture(useXiao: true) == closedSettings.Capture(useXiao: true),
     "both transports' speeds, input method and layout reopen exactly as they were closed");
 var inputJson = File.ReadAllText(inputPath);
 using (var json = System.Text.Json.JsonDocument.Parse(inputJson))
     Check(json.RootElement.EnumerateObject().Select(property => property.Name).Order()
-        .SequenceEqual(new[] { "AsciiSpeed", "JapaneseSpeed", "Layout", "Mode", "Version", "XiaoAsciiPreset", "XiaoJapanesePreset" }),
+        .SequenceEqual(new[] { "AsciiSpeed", "JapaneseInput", "JapaneseSpeed", "Layout", "Mode", "Version", "XiaoAsciiPreset", "XiaoJapanesePreset" }),
         "input preference file holds only the schema and selector values, no text");
 Check(!Directory.EnumerateFiles(inputRoot, "*.tmp").Any(), "input preference save leaves no pending temporary file");
 var goodInputBytes = File.ReadAllBytes(inputPath);
@@ -1026,7 +1028,7 @@ try { inputStore.Save(new InputPreferences(JapaneseSpeed: (JapaneseSpeed)99)); C
 catch (InvalidDataException) { Check(true, "invalid input preference save is rejected before filesystem mutation"); }
 Check(File.ReadAllBytes(inputPath).SequenceEqual(goodInputBytes), "rejected input save preserves the last valid file");
 foreach (var malformed in new[] { "null", "{", "{\"Version\":2}", "{\"Mode\":\"Kana\"}", "{\"AsciiSpeed\":9}", "{\"AsciiSpeed\":\"XiaoFastest\"}",
-    "{\"JapaneseSpeed\":\"Trial10\"}", "{\"XiaoAsciiPreset\":9}", new string(' ', 4097) })
+    "{\"JapaneseSpeed\":\"Trial10\"}", "{\"XiaoAsciiPreset\":9}", "{\"JapaneseInput\":9}", new string(' ', 4097) })
 {
     File.WriteAllText(inputPath, malformed);
     try { _ = inputStore.Load(); Check(false, "malformed input preferences must be rejected"); }

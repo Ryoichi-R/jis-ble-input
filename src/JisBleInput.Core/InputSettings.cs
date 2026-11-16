@@ -9,6 +9,7 @@ public sealed class InputSettings
     public TextInputMode Mode { get; private set; } = TextInputMode.Japanese;
     public JapaneseSpeed JapaneseSpeed { get; private set; } = JapaneseSpeed.Standard;
     public AsciiSpeed AsciiSpeed { get; private set; } = AsciiSpeed.Fast;
+    public JapaneseInputMethod JapaneseInput { get; private set; } = JapaneseInputMethod.MicrosoftIme;
     public ReceiverKeyboardLayout Layout { get; private set; } = ReceiverKeyboardLayout.JapaneseJis;
 
     public void SetMode(TextInputMode mode)
@@ -37,6 +38,12 @@ public sealed class InputSettings
         return Mode == TextInputMode.Japanese ? (int)JapaneseSpeed : (int)AsciiSpeed;
     }
 
+    public void SetJapaneseInput(JapaneseInputMethod japaneseInput)
+    {
+        if (!Enum.IsDefined(japaneseInput)) throw new ArgumentException("日本語の受信側を選択してください。");
+        JapaneseInput = japaneseInput;
+    }
+
     public void SetLayout(ReceiverKeyboardLayout layout)
     {
         if (!Enum.IsDefined(layout)) throw new ArgumentException("受信側の配列を選択してください。");
@@ -48,7 +55,7 @@ public sealed class InputSettings
         useXiao ? XiaoAsciiSpeeds[(int)xiaoAsciiPreset].Speed : AsciiSpeed);
 
     public InputPreferences ToPreferences() => new(Mode: Mode, JapaneseSpeed: JapaneseSpeed, AsciiSpeed: AsciiSpeed,
-        Layout: Layout, XiaoJapanesePreset: xiaoJapanesePreset, XiaoAsciiPreset: xiaoAsciiPreset);
+        Layout: Layout, XiaoJapanesePreset: xiaoJapanesePreset, XiaoAsciiPreset: xiaoAsciiPreset, JapaneseInput: JapaneseInput);
 
     public void Restore(InputPreferences preferences)
     {
@@ -57,6 +64,7 @@ public sealed class InputSettings
         JapaneseSpeed = preferences.JapaneseSpeed;
         AsciiSpeed = preferences.AsciiSpeed;
         Layout = preferences.Layout;
+        JapaneseInput = preferences.JapaneseInput;
         xiaoJapanesePreset = preferences.XiaoJapanesePreset;
         xiaoAsciiPreset = preferences.XiaoAsciiPreset;
     }

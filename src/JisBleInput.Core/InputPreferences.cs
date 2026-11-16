@@ -11,13 +11,14 @@ public sealed record InputPreferences(int Version = 1,
     AsciiSpeed AsciiSpeed = AsciiSpeed.Fast,
     ReceiverKeyboardLayout Layout = ReceiverKeyboardLayout.JapaneseJis,
     XiaoSpeedPreset XiaoJapanesePreset = XiaoSpeedPreset.Standard,
-    XiaoSpeedPreset XiaoAsciiPreset = XiaoSpeedPreset.Standard)
+    XiaoSpeedPreset XiaoAsciiPreset = XiaoSpeedPreset.Standard,
+    JapaneseInputMethod JapaneseInput = JapaneseInputMethod.MicrosoftIme)
 {
     public void Validate()
     {
         if (Version != 1 || !Enum.IsDefined(Mode) || !Enum.IsDefined(JapaneseSpeed) || JapaneseSpeed > JapaneseSpeed.Faster
             || !Enum.IsDefined(AsciiSpeed) || AsciiSpeed > AsciiSpeed.Fastest || !Enum.IsDefined(Layout)
-            || !Enum.IsDefined(XiaoJapanesePreset) || !Enum.IsDefined(XiaoAsciiPreset))
+            || !Enum.IsDefined(XiaoJapanesePreset) || !Enum.IsDefined(XiaoAsciiPreset) || !Enum.IsDefined(JapaneseInput))
             throw new InvalidDataException("入力設定の形式に対応していません。");
     }
 }

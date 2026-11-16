@@ -55,6 +55,7 @@ internal static class UiTestProgram
         await VerifyHostChoiceGuidanceAsync();
         await XiaoConnectionChecks.RunAsync(Check);
         await VerifyX64PreferencesAsync();
+        await VerifyJapaneseReceiverRestartAsync();
 
         // Exercise the real WPF Closing handler and NotifyIcon without starting
         // a GATT service, sending text or changing the computer's Bluetooth radio.
@@ -583,6 +584,46 @@ internal static class UiTestProgram
         }
     }
 
+    private static async Task VerifyJapaneseReceiverRestartAsync()
+    {
+        var directory = Path.Combine("_internal", "build-cache", "test-data", "japanese-receiver", Guid.NewGuid().ToString("N"));
+        var path = Path.Combine(directory, "input-preferences.json");
+
+        var receiverChoices = new[]
+        {
+            (Before: JapaneseInputMethod.MicrosoftIme, After: JapaneseInputMethod.MacUnicodeHex),
+            (Before: JapaneseInputMethod.MacUnicodeHex, After: JapaneseInputMethod.MicrosoftIme),
+            (Before: JapaneseInputMethod.MicrosoftIme, After: JapaneseInputMethod.MicrosoftIme)
+        };
+        foreach (var (before, after) in receiverChoices)
+        {
+            var window = new MainWindow(Architecture.X64, false, directory,
+                keyboardConnection: new UnselectedConnection(local: true, hasConnectedHost: false));
+            var closed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            window.Closed += (_, _) => closed.TrySetResult();
+            window.Show();
+            try
+            {
+                window.OpenSettings();
+                var settings = window.OwnedWindows.Cast<Window>().Single();
+                var receiver = Find<ComboBox>(settings, "JapaneseReceiver");
+                Check(receiver.SelectedIndex == (before == JapaneseInputMethod.MacUnicodeHex ? 1 : 0)
+                    && window.SelectedOptions().JapaneseInput == before, "a new window restores the Japanese receiver and its effective send options");
+
+                receiver.SelectedIndex = after == JapaneseInputMethod.MacUnicodeHex ? 1 : 0;
+                settings.Close();
+                await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+                Check(new InputPreferencesStore(path).Load().JapaneseInput == after,
+                    "closing settings preserves the last choice of Japanese receiver");
+            }
+            finally
+            {
+                window.RequestExit();
+                await closed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            }
+        }
+    }
+
     private static async Task VerifyX64PreferencesAsync()
     {
         foreach (var hasXiaoSettings in new[] { false, true })
@@ -656,7 +697,7 @@ internal static class UiTestProgram
         }
     }
 
-    private sealed class UnselectedConnection(bool local) : IKeyboardConnection
+    private sealed class UnselectedConnection(bool local, bool hasConnectedHost = true) : IKeyboardConnection
     {
         public List<byte[]> Reports { get; } = [];
         private string? selected;
@@ -669,7 +710,7 @@ internal static class UiTestProgram
         public bool? CapsLock => false;
         public bool IsStarted => true;
         public bool UsesLocalBluetooth => local;
-        public bool HasConnectedHost => true;
+        public bool HasConnectedHost => hasConnectedHost;
         public string Diagnostic => "synthetic unselected host";
         public void Select(string? id) { if (id is not null) Selections++; selected = id; }
         public Task StartAsync(bool newPairing, CancellationToken cancellation) => Task.CompletedTask;
