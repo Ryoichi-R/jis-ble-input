@@ -56,6 +56,7 @@ internal static class UiTestProgram
         await XiaoConnectionChecks.RunAsync(Check);
         await VerifyX64PreferencesAsync();
         await VerifyJapaneseReceiverRestartAsync();
+        await VerifyPresetOrderAsync();
 
         // Exercise the real WPF Closing handler and NotifyIcon without starting
         // a GATT service, sending text or changing the computer's Bluetooth radio.
@@ -622,6 +623,72 @@ internal static class UiTestProgram
                 await closed.Task.WaitAsync(TimeSpan.FromSeconds(5));
             }
         }
+    }
+
+    private static async Task VerifyPresetOrderAsync()
+    {
+        var directory = Path.Combine("_internal", "build-cache", "test-data", "preset-order", Guid.NewGuid().ToString("N"));
+        var store = new TextPresetStore(Path.Combine(directory, "text-presets.json"));
+        var receipt = new TextPreset("受付", "受付しました。", TextInputMode.Japanese, 0, 2);
+        var url = new TextPreset("URL", "https://example.com/", TextInputMode.Ascii, 1, null);
+        var notice = new TextPreset("案内", "ご案内します。", TextInputMode.Japanese, null, 1);
+        store.Save([receipt, url, notice]);
+
+        MainWindow OpenWindow()
+        {
+            var main = new MainWindow(Architecture.X64, false, directory,
+                keyboardConnection: new UnselectedConnection(local: true, hasConnectedHost: false));
+            main.Show();
+            return main;
+        }
+
+        var window = OpenWindow();
+        try
+        {
+            var picker = Find<ComboBox>(window, "PresetChoice");
+            picker.SelectedIndex = 2;
+            window.OpenSettings();
+            var settings = window.OwnedWindows.Cast<Window>().Single();
+            var move = window.Dispatcher.InvokeAsync(() =>
+            {
+                var manager = settings.OwnedWindows.OfType<TextPresetsWindow>().Single();
+                try
+                {
+                    var entries = Find<ComboBox>(manager, "PresetEntries");
+                    var up = Find<Button>(manager, "MovePresetUpButton");
+                    var down = Find<Button>(manager, "MovePresetDownButton");
+                    entries.SelectedIndex = 0;
+                    Check(!up.IsEnabled && !down.IsEnabled, "the new preset row cannot move");
+                    entries.SelectedIndex = 2;
+                    var text = Find<TextBox>(manager, "PresetText");
+                    text.Text = "unsaved";
+                    down.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                    Check(entries.SelectedIndex == 3 && (string)entries.SelectedItem == url.Name
+                        && up.IsEnabled && !down.IsEnabled, "moving down keeps the same preset selected at the bottom");
+                    Check(store.Load().Presets.SequenceEqual([receipt, notice, url]) && text.Text == "unsaved",
+                        "moving immediately saves the order while retaining unsaved edits in the editor");
+                    up.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                    up.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                    Check(entries.SelectedIndex == 1 && (string)entries.SelectedItem == url.Name
+                        && !up.IsEnabled && down.IsEnabled, "moving up keeps the same preset selected at the top");
+                }
+                finally { manager.Close(); }
+            }, DispatcherPriority.ApplicationIdle);
+            Find<Button>(settings, "ManagePresetsButton").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            await move.Task;
+            Check(picker.Items.Cast<string>().Skip(1).SequenceEqual([url.Name, receipt.Name, notice.Name])
+                && (string)picker.SelectedItem == url.Name, "the main picker refreshes the order and retains its selection");
+        }
+        finally { window.PrepareForSessionEnd(); window.Close(); }
+
+        var restarted = OpenWindow();
+        try
+        {
+            var picker = Find<ComboBox>(restarted, "PresetChoice");
+            Check(picker.Items.Cast<string>().Skip(1).SequenceEqual([url.Name, receipt.Name, notice.Name])
+                && store.Load().Presets.SequenceEqual([url, receipt, notice]), "a new window loads the saved order and original preset values");
+        }
+        finally { restarted.PrepareForSessionEnd(); restarted.Close(); }
     }
 
     private static async Task VerifyX64PreferencesAsync()

@@ -25,6 +25,8 @@ internal sealed class TextPresetsWindow : Window
     private readonly ComboBox localSpeed = new();
     private readonly ComboBox xiaoSpeed = new();
     private readonly TextBlock feedback = new() { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 8, 0, 0) };
+    private readonly Button moveUp = Action("上へ");
+    private readonly Button moveDown = Action("下へ");
     private readonly Button delete = Action("削除");
     private readonly TextBlock recovery = new() { TextWrapping = TextWrapping.Wrap };
     private bool refreshing;
@@ -66,6 +68,14 @@ internal sealed class TextPresetsWindow : Window
         selectRow.Children.Add(entries);
         panel.Children.Add(selectRow);
         AutomationProperties.SetName(entries, "編集する定型文");
+        var orderActions = new WrapPanel { HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 6, 0, 0) };
+        moveUp.Name = "MovePresetUpButton";
+        moveDown.Name = "MovePresetDownButton";
+        AutomationProperties.SetName(moveUp, "選んだ定型文を上へ移動");
+        AutomationProperties.SetName(moveDown, "選んだ定型文を下へ移動");
+        orderActions.Children.Add(moveUp);
+        orderActions.Children.Add(moveDown);
+        panel.Children.Add(orderActions);
         AddField(panel, "表示名", displayName);
         AddField(panel, "本文", text);
         AddField(panel, "入力方法", mode);
@@ -107,6 +117,8 @@ internal sealed class TextPresetsWindow : Window
         add.Click += (_, _) => { entries.SelectedIndex = 0; ShowEntry(); displayName.Focus(); };
         save.Click += (_, _) => SaveEntry();
         close.Click += (_, _) => Close();
+        moveUp.Click += (_, _) => MoveEntry(-1);
+        moveDown.Click += (_, _) => MoveEntry(1);
         delete.Click += (_, _) =>
         {
             var index = entries.SelectedIndex - 1;
@@ -119,13 +131,14 @@ internal sealed class TextPresetsWindow : Window
         UpdateEntries(selectedIndex + 1);
     }
 
-    private void UpdateEntries(int selected)
+    private void UpdateEntries(int selected, bool preserveEditor = false)
     {
         refreshing = true;
         entries.ItemsSource = new[] { "新規登録" }.Concat(Presets.Select(preset => preset.Name)).ToArray();
         entries.SelectedIndex = selected;
         refreshing = false;
-        ShowEntry();
+        if (preserveEditor) UpdateEntryActions(selected - 1);
+        else ShowEntry();
     }
 
     private void ShowEntry()
@@ -138,8 +151,15 @@ internal sealed class TextPresetsWindow : Window
         mode.SelectedIndex = (int)preset.Mode;
         UpdateSpeeds(preset.BluetoothSpeed, preset.XiaoSpeed);
         refreshing = false;
-        delete.IsEnabled = index >= 0;
+        UpdateEntryActions(index);
         feedback.Text = "";
+    }
+
+    private void UpdateEntryActions(int index)
+    {
+        delete.IsEnabled = index >= 0;
+        moveUp.IsEnabled = index > 0;
+        moveDown.IsEnabled = index >= 0 && index < Presets.Length - 1;
     }
 
     private void UpdateSpeeds(int? local, int? xiao)
@@ -166,7 +186,18 @@ internal sealed class TextPresetsWindow : Window
         Save(next, index + 1, "定型文を保存しました。");
     }
 
-    private void Save(List<TextPreset> next, int selected, string success)
+    private void MoveEntry(int offset)
+    {
+        var index = entries.SelectedIndex - 1;
+        var target = index + offset;
+        if (index < 0 || target < 0 || target >= Presets.Length) return;
+
+        var next = Presets.ToList();
+        (next[index], next[target]) = (next[target], next[index]);
+        Save(next, target + 1, "定型文の表示順を保存しました。", preserveEditor: true);
+    }
+
+    private void Save(List<TextPreset> next, int selected, string success, bool preserveEditor = false)
     {
         try
         {
@@ -179,7 +210,7 @@ internal sealed class TextPresetsWindow : Window
             Presets = updated;
             RecoveryNotice = null;
             recovery.Visibility = Visibility.Collapsed;
-            UpdateEntries(selected);
+            UpdateEntries(selected, preserveEditor);
             feedback.Text = backup is null ? success : $"{success} 元ファイル: {Path.GetFileName(backup)}";
         }
         catch (ArgumentException error) { feedback.Text = error.Message; }
