@@ -1,4 +1,4 @@
-# JIS BLE Input 1.20.2
+# JIS BLE Input 1.21.0
 
 ## 概要
 
