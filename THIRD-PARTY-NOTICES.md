@@ -5,8 +5,8 @@
 | コンポーネント                                      | 用途                                                      | 許諾文と出所                                                                                                                                             |
 | --------------------------------------------------- | --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | BleHid v0.6.0のHID descriptor                       | キーボード定義を基にマウス部分を除外しJIS/IME usageを拡張 | MIT。`licenses/windows-ble-hid-LICENSE.txt`と[上流ソース](https://github.com/abhishek-raj/windows-ble-hid/blob/v0.6.0/src/BleHid.Core/HidDescriptors.cs) |
-| .NET / Windows Desktop runtime / host 10.0.14（ARM64 / x64） | Windowsアプリに同梱                                       | Microsoft公式パックのMIT許諾文と各第三者notice。配布物の`licenses/`へ収集                                                                                |
-| System.IO.Ports 10.0.14                             | USBシリアル通信                                           | パッケージのMIT宣言、同版.NETの許諾文、第三者noticeと出所を配布物の`licenses/system-io-ports/`へ収集                                                     |
+| .NET / Windows Desktop runtime / host 10.0.15（ARM64 / x64） | Windowsアプリに同梱                                       | Microsoft公式パックのMIT許諾文と各第三者notice。配布物の`licenses/`へ収集                                                                                |
+| System.IO.Ports 10.0.15                             | USBシリアル通信                                           | パッケージのMIT宣言、同版.NETの許諾文、第三者noticeと出所を配布物の`licenses/system-io-ports/`へ収集                                                     |
 | Seeed nRF52 SDK 1.1.13                              | Sense用FWのコアとライブラリ                               | LGPL-2.1-or-later、MIT、Nordic独自条件などが混在。採用SDK原本と許諾文を配布物の`firmware/rebuild/`、`firmware/licenses/sdk/`に保持                       |
 
 SDK内のBluefruit、TinyUSB、FreeRTOS、LittleFS、Nordic nrfx / SoftDevice API等は、それぞれの原文を参照してください。Nordicの条件を含むため、FWとSDKを他社IC向けに無条件で利用できるものではありません。配布imageはアプリ領域だけで、基板のSoftDeviceやbootloaderを書き換えません。

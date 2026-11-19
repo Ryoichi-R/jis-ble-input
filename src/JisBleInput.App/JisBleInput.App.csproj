@@ -16,12 +16,12 @@
         <Copyright>Copyright (c) 2026 Ryoichi-R and contributors</Copyright>
         <PackageLicenseExpression>MIT</PackageLicenseExpression>
         <ApplicationIcon>../../assets/app.ico</ApplicationIcon>
-        <BundledRuntimeVersion>10.0.14</BundledRuntimeVersion>
+        <BundledRuntimeVersion>10.0.15</BundledRuntimeVersion>
         <DisableTransitiveFrameworkReferenceDownloads>true</DisableTransitiveFrameworkReferenceDownloads>
         <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     </PropertyGroup>
     <ItemGroup>
-        <PackageReference Include="System.IO.Ports" Version="10.0.14" />
+        <PackageReference Include="System.IO.Ports" Version="10.0.15" />
         <EmbeddedResource Include="../../assets/app.ico" LogicalName="JisBleInput.AppIcon.ico" />
         <!-- The WPF profile uses this runtime pack; make it explicit so offline
              restore does not depend on unrelated transitive framework packs. -->
