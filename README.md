@@ -1,4 +1,4 @@
-# JIS BLE Input 1.21.0
+# JIS BLE Input 1.21.1
 
 ## 概要
 
@@ -10,7 +10,7 @@
 
 ## macOSからWindowsに送信する
 
-Mac版0.20.0は、内蔵BluetoothでWindowsに半角英数字・記号・改行を最大5,000文字まで送信します。
+Mac版0.20.1は、内蔵BluetoothでWindowsに半角英数字・記号・改行を最大5,000文字まで送信します。
 ソース、起動方法、macOSでのビルド手順は [Mac版 README](src/JisBleInput.Mac/README.md) を参照してください。
 
 ## Macで日本語・混在文を受信する

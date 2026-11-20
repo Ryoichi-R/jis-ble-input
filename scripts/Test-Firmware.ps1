@@ -30,6 +30,8 @@ if ($LASTEXITCODE -ne 0 -or ($result -join "`n") -notmatch 'Passed: ([1-9][0-9]*
 $checks = [int]$Matches[1]
 & python (Join-Path $projectRoot 'tests/firmware_image_spec.py') *> (Join-Path $output 'image-tests.log')
 if ($LASTEXITCODE -ne 0) { Get-Content -LiteralPath (Join-Path $output 'image-tests.log'); throw 'FIRMWARE_IMAGE_TESTS_FAILED' }
+if ((Get-Content -LiteralPath (Join-Path $output 'image-tests.log') -Raw) -notmatch '(?m)^Ran (\d+) tests?\b') { throw 'FIRMWARE_IMAGE_TEST_COUNT_MISSING' }
+$imageTestCount = [int]$Matches[1]
 # Line coverage of the host-testable pure logic (src/*.h). The .ino SDK boundary is not host-compilable
 # and stays a hardware item. MSVC's STL needs C++14, so this instrumented build is separate from the C++11 build above.
 . (Join-Path $PSScriptRoot 'Get-FirmwareHostTools.ps1')
@@ -69,6 +71,6 @@ $formatSummary
 if ("$formatSummary" -notmatch '^C\+\+ format: (Passed|NOT_CONFORMING) \((\d+)/(\d+) files') { throw 'FIRMWARE_FORMAT_CHECK_FAILED' }
 $cppFormat = [pscustomobject]@{ Status = $Matches[1]; FilesNeedingFormat = [int]$Matches[2]; Files = [int]$Matches[3]; Enforced = $true; Tool = 'clang-format 23.1.2, firmware/xiao-nrf52840/.clang-format' }
 [pscustomobject]@{
-    Status = 'Passed'; Checks = $checks; ImageSafetyTests = 10; HardwareTested = $false; CppFormat = $cppFormat
+    Status = 'Passed'; Checks = $checks; ImageSafetyTests = $imageTestCount; HardwareTested = $false; CppFormat = $cppFormat
     LineCoverage = [pscustomobject]@{ Percent = $linePercent; Covered = $coveredLines; Total = $totalLines; Threshold = 90; Scope = 'firmware/xiao-nrf52840/src/*.h (host-testable logic; .ino SDK boundary excluded)'; Tool = 'LLVM 23.1.2 clang/llvm-cov, C++14 instrumented build'; Files = $coverageFiles }
 } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $output 'receipt.json') -Encoding utf8NoBOM

@@ -11,6 +11,7 @@ fi
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp Info.plist "$app/Contents/Info.plist"
 cp ../../LICENSE "$app/Contents/Resources/LICENSE"
+cp ../../licenses/windows-ble-hid-LICENSE.txt "$app/Contents/Resources/windows-ble-hid-LICENSE.txt"
 sips -s format icns AppIcon.png --out "$app/Contents/Resources/AppIcon.icns" >/dev/null
 minimum=$(plutil -extract LSMinimumSystemVersion raw Info.plist)
 swiftc -target "$(uname -m)-apple-macos${minimum}" -warnings-as-errors -module-cache-path "$PWD/.module-cache" "${flags[@]}" \

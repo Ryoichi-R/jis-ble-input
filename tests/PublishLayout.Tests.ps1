@@ -24,9 +24,14 @@ Describe 'ARM64 publish package validation' -Tag 'PackageIntegration', 'Arm64Pac
         $result.Sha256 | Should -Match '^[A-F0-9]{64}$'
     }
 
+    It 'runs the HID contract check with only the extracted rebuild files' {
+        $script = Join-Path $publish 'firmware/rebuild/jis-ble-input/scripts/Test-XiaoContract.ps1'
+        (& $script) | Should -Match 'HID contract: PASS'
+    }
+
     It 'reports a missing firmware receipt before restore or publish' {
         $absent = Join-Path $workspaceRoot ([guid]::NewGuid().ToString('N'))
-        { & (Join-Path $projectRoot 'scripts/Publish.ps1') -FirmwareCachePath $absent } | Should -Throw '*FIRMWARE_BUILD_MISSING*'
+        { & (Join-Path $projectRoot 'scripts/Publish.ps1') -FirmwareCachePath $absent -PackageSuffix ([guid]::NewGuid().ToString('N')) } | Should -Throw '*FIRMWARE_BUILD_MISSING*'
     }
 
     It 'rejects an executable with the wrong product version' {

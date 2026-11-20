@@ -6,6 +6,7 @@
     <ItemGroup>
         <EmbeddedResource Include="../../contracts/xiao-protocol-v1/vectors.tsv" LogicalName="xiao-vectors.tsv" />
         <ProjectReference Include="../../src/JisBleInput.Core/JisBleInput.Core.csproj" />
+        <Compile Include="../../src/JisBleInput.App/HidReportQueue.cs" Link="HidReportQueue.cs" />
         <Compile Include="../../src/JisBleInput.App/HidKeyboardMap.cs" Link="HidKeyboardMap.cs" />
     </ItemGroup>
 </Project>

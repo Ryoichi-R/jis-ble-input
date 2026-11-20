@@ -40,7 +40,7 @@ foreach ($relative in @('firmware/xiao-nrf52840', 'contracts/xiao-protocol-v1'))
     $null = New-Item -ItemType Directory -Path $destination -Force
     Copy-Item -LiteralPath (Join-Path $projectRoot $relative) -Destination $destination -Recurse -Force
 }
-foreach ($relative in @('LICENSE', 'THIRD-PARTY-NOTICES.md', 'scripts/Build-Firmware.ps1', 'scripts/Get-FirmwareSourceHash.ps1', 'scripts/Get-FirmwareHostTools.ps1', 'scripts/Test-Firmware.ps1', 'scripts/Test-FirmwareFormat.ps1', 'scripts/Test-FirmwareImage.py', 'scripts/Prepare-FirmwareTools.ps1', 'scripts/Flash-Firmware.ps1', 'scripts/Test-XiaoContract.ps1', 'scripts/Generate-XiaoVectors.py', 'tests/firmware_image_spec.py', 'src/JisBleInput.App/HidKeyboardMap.cs', 'licenses/windows-ble-hid-LICENSE.txt')) {
+foreach ($relative in @('LICENSE', 'THIRD-PARTY-NOTICES.md', 'scripts/Build-Firmware.ps1', 'scripts/Get-FirmwareSourceHash.ps1', 'scripts/Get-FirmwareHostTools.ps1', 'scripts/Test-Firmware.ps1', 'scripts/Test-FirmwareFormat.ps1', 'scripts/Test-FirmwareImage.py', 'scripts/Prepare-FirmwareTools.ps1', 'scripts/Flash-Firmware.ps1', 'scripts/Test-XiaoContract.ps1', 'scripts/Generate-XiaoVectors.py', 'tests/firmware_image_spec.py', 'src/JisBleInput.App/HidKeyboardMap.cs', 'src/JisBleInput.Core/XiaoClient.cs', 'licenses/windows-ble-hid-LICENSE.txt')) {
     $destination = Join-Path $rebuild $relative
     $null = New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force
     Copy-Item -LiteralPath (Join-Path $projectRoot $relative) -Destination $destination

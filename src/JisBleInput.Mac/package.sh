@@ -6,6 +6,7 @@ app="JIS-BLE-Input.app"
 version=$(plutil -extract CFBundleShortVersionString raw "$app/Contents/Info.plist")
 archive="JIS-BLE-Input-${version}-macOS-$(uname -m).zip"
 codesign --verify --strict "$app"
+cmp ../../licenses/windows-ble-hid-LICENSE.txt "$app/Contents/Resources/windows-ble-hid-LICENSE.txt"
 mkdir -p dist
 ditto -c -k --keepParent "$app" "dist/$archive"
 cd dist

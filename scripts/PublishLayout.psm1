@@ -70,6 +70,7 @@ function Test-PublishLayout {
             'firmware/README.md', 'firmware/compatibility.json', 'firmware/toolchain.json',
             'firmware/xiao-nrf52840.ino.uf2', 'firmware/xiao-nrf52840.ino.hex', 'firmware/xiao-nrf52840.ino.zip',
             'firmware/rebuild/Seeed_nRF52_Boards-1.1.13.tar.bz2', 'firmware/rebuild/linkable-objects.zip',
+            'firmware/rebuild/jis-ble-input/src/JisBleInput.Core/XiaoClient.cs',
             'firmware/rebuild/jis-ble-input/LICENSE', 'firmware/rebuild/jis-ble-input/scripts/Get-FirmwareHostTools.ps1',
             'firmware/licenses/sdk/LICENSE', 'firmware/licenses/sdk/Nordic-SoftDevice-API.txt',
             'firmware/licenses/sdk/LGPL-2.1.txt', 'firmware/licenses/sdk/libraries/Adafruit_nRFCrypto/src/cortex-m4/license.txt',

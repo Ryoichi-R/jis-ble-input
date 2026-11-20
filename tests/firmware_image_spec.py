@@ -1,9 +1,11 @@
+import contextlib
 import importlib.util
 import io
-import contextlib
+import json
 import struct
 import unittest
 import uuid
+import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -88,6 +90,39 @@ class ImageSafetyTests(unittest.TestCase):
         uf2 = self.path.with_suffix(".uf2")
         uf2.write_bytes(data)
         return uf2
+
+    def dfu(self, manifest_crc, packet_crc):
+        archive = self.path.with_suffix(".zip")
+        manifest = {
+            "dfu_version": 0.5,
+            "application": {
+                "bin_file": "application.bin",
+                "dat_file": "application.dat",
+                "init_packet_data": {
+                    "device_type": 0x52,
+                    "softdevice_req": [0x123],
+                    "firmware_crc16": manifest_crc,
+                },
+            },
+        }
+        with zipfile.ZipFile(archive, "w") as output:
+            output.writestr("application.bin", bytes.fromhex("0000042001710200"))
+            packet = struct.pack("<HHIHHH", 0x52, 0xFFFF, 0xFFFFFFFF, 1, 0x123, packet_crc)
+            output.writestr("application.dat", packet)
+            output.writestr("manifest.json", json.dumps({"manifest": manifest}))
+        return archive
+
+    def test_valid_dfu_matches_hex_and_crc(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            IMAGE.verify(self.path, zip_path=self.dfu(0xC0C5, 0xC0C5))
+
+    def test_reject_matching_but_incorrect_crc_fields(self):
+        with self.assertRaisesRegex(ValueError, "firmware CRC"):
+            IMAGE.verify(self.path, zip_path=self.dfu(0, 0))
+
+    def test_reject_incorrect_packet_crc(self):
+        with self.assertRaisesRegex(ValueError, "init packet"):
+            IMAGE.verify(self.path, zip_path=self.dfu(0xC0C5, 0))
 
     def test_valid_uf2_matches_hex(self):
         with contextlib.redirect_stdout(io.StringIO()):

@@ -1,8 +1,9 @@
 """Verify application-only Intel HEX / UF2, without opening any device."""
 
+import binascii
+import json
 import struct
 import sys
-import json
 import zipfile
 from pathlib import Path
 
@@ -93,6 +94,8 @@ def verify(hex_path, uf2_path=None, zip_path=None):
                 binary[address - 0x27000] != value for address, value in memory.items()
             ):
                 raise ValueError("DFU/HEX mismatch")
+            if binascii.crc_hqx(binary, 0xFFFF) != metadata["firmware_crc16"]:
+                raise ValueError("DFU firmware CRC mismatch")
             packet = archive.read(application["dat_file"])
             if len(packet) != 14 or struct.unpack("<HHIHHH", packet) != (
                 0x52,

@@ -34,6 +34,7 @@ final class KeyboardSender: NSObject, NSApplicationDelegate, NSTextViewDelegate,
     private var confirmingSubscriber = false
     private var subscriptions = Set<CBUUID>()
     private var protocolMode: UInt8 = 1
+    private var receiverSuspended = false
     private var sendTask: Task<Void, Never>?
     private var transferActivity: NSObjectProtocol?
     private var transferAbortedForLED = false
@@ -322,7 +323,8 @@ final class KeyboardSender: NSObject, NSApplicationDelegate, NSTextViewDelegate,
             case .on: screen.connection.stringValue = "WindowsのCapsLockをオフにしてください。"
             case .off: screen.connection.stringValue = connectionSummary
             }
-        case .disconnected: screen.connection.stringValue = connectionSummary
+        case .disconnected:
+            screen.connection.stringValue = receiverSuspended ? "受信PCが休止中です。復帰を待っています。" : connectionSummary
         }
         screen.send.title = !idle && transferControl == .paused ? "続行" : "送信"
         screen.send.isEnabled = idle
@@ -368,9 +370,7 @@ final class KeyboardSender: NSObject, NSApplicationDelegate, NSTextViewDelegate,
         print("STATE \(peripheral.state.rawValue) AUTHORIZATION \(CBManager.authorization.rawValue)")
         guard peripheral.state == .poweredOn else {
             changeConnection(connected: false)
-            subscriber = nil
-            subscriptions.removeAll()
-            protocolMode = 1
+            resetReceiver()
             initialized = false
             registered.removeAll()
             let message: String
@@ -464,7 +464,7 @@ final class KeyboardSender: NSObject, NSApplicationDelegate, NSTextViewDelegate,
             }
         }
         let previousInput = activeInput
-        let newConnection = subscriber !== central
+        let newConnection = subscriber?.identifier != central.identifier
         if newConnection {
             bestEffortReleaseBeforeBoundary()
             peripheral.setDesiredConnectionLatency(.low, for: central)
@@ -495,20 +495,35 @@ final class KeyboardSender: NSObject, NSApplicationDelegate, NSTextViewDelegate,
 
     func peripheralManager(_ peripheral: CBPeripheralManager, central: CBCentral,
                            didUnsubscribeFrom characteristic: CBCharacteristic) {
-        guard subscriber === central,
+        guard subscriber?.identifier == central.identifier,
               inputCharacteristics.contains(where: { $0 === characteristic }) else { return }
         bestEffortReleaseBeforeBoundary()
         subscriptions.remove(characteristic.uuid)
-        if subscriptions.isEmpty { subscriber = nil }
+        if subscriptions.isEmpty { resetReceiver() }
         changeConnection(connected: activeInput != nil && !sleeping)
         showConnection("HID購読が変更されました。LED通知・キー解放を再確認します。")
+    }
+
+    private func resetReceiver() {
+        subscriber = nil
+        subscriptions.removeAll()
+        protocolMode = 1
+        receiverSuspended = false
+    }
+
+    private func receiveControl(_ command: UInt8) {
+        guard command <= 1, receiverSuspended != (command == 0) else { return }
+        if command == 0 { bestEffortReleaseBeforeBoundary() }
+        receiverSuspended = command == 0
+        changeConnection(connected: activeInput != nil || simulatedWrite != nil)
+        showConnection(receiverSuspended ? "受信PCが休止中です。" : "受信PCが復帰しました。LED通知とキー解放を確認します。")
     }
 
     func peripheralManager(_ peripheral: CBPeripheralManager, didReceiveRead request: CBATTRequest) {
         let id = request.characteristic.uuid
         let value: Data
         switch id {
-        case uuid("2A4E"): value = Data([protocolMode])
+        case uuid("2A4E"): value = Data([subscriber?.identifier == request.central.identifier ? protocolMode : 1])
         case uuid("2A22"): value = Data(repeating: 0, count: 8)
         case uuid("2A32"): value = Data([0])
         case uuid("2A4D"):
@@ -529,9 +544,13 @@ final class KeyboardSender: NSObject, NSApplicationDelegate, NSTextViewDelegate,
         guard let first = requests.first else { return }
         for request in requests {
             guard manager === peripheral, peripheral.state == .poweredOn,
-                  !sleeping, subscriber === request.central, request.offset == 0,
+                  subscriber?.identifier == request.central.identifier, request.offset == 0,
                   let value = request.value, value.count == 1 else { continue }
             let id = request.characteristic.uuid
+            if id == uuid("2A4C"),
+               services.first?.characteristics?.contains(where: { $0 === request.characteristic }) == true {
+                receiveControl(value[0])
+            }
             if id == uuid("2A4E"),
                services.first?.characteristics?.contains(where: { $0 === request.characteristic }) == true,
                value[0] <= 1, protocolMode != value[0] {
@@ -1021,7 +1040,26 @@ final class KeyboardSender: NSObject, NSApplicationDelegate, NSTextViewDelegate,
         willSleep(Notification(name: NSWorkspace.willSleepNotification))
         didWake(Notification(name: NSWorkspace.didWakeNotification))
         precondition(!screen.send.isEnabled && sendTask == nil && reports.count == 3)
-        print("ASCII boundary, CapsLock, release gating, disconnect and sleep checks passed")
+        changeConnection(connected: true)
+        receiveLED(0, generation: safety.generation)
+        simulatedWrite = { _ in true }
+        sendText()
+        let interrupted = sendTask
+        precondition(interrupted != nil)
+        receiveControl(0)
+        await interrupted?.value
+        precondition(receiverSuspended && !safety.connected && sendTask == nil && !screen.send.isEnabled)
+        changeConnection(connected: true)
+        precondition(!safety.connected)
+        receiveControl(1)
+        precondition(safety.release == .accepted && safety.capsLock == .unknown && !screen.send.isEnabled)
+        receiveLED(0, generation: safety.generation)
+        precondition(screen.send.isEnabled && sendTask == nil)
+        protocolMode = 0
+        receiveControl(0)
+        resetReceiver()
+        precondition(protocolMode == 1 && !receiverSuspended)
+        print("ASCII boundary, CapsLock, release gating, disconnect, suspend and sleep checks passed")
     }
     #endif
 
@@ -1031,9 +1069,9 @@ final class KeyboardSender: NSObject, NSApplicationDelegate, NSTextViewDelegate,
         sendTask = nil
         endTransferActivity()
         releaseTimeoutTask?.cancel()
-        safety.begin(connected: connected, now: now)
+        safety.begin(connected: connected && !sleeping && !receiverSuspended, now: now)
         transferControl = .stopping
-        if connected { releaseKey() }
+        if safety.connected { releaseKey() }
         if wasSending {
             show("接続状態の変化で送信を中断しました。受信欄とキー状態を確認し、新しい手動送信を行ってください。")
         }

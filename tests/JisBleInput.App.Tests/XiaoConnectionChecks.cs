@@ -36,7 +36,7 @@ internal static class XiaoConnectionChecks
         await io.ReportWritten.Task.WaitAsync(TimeSpan.FromSeconds(1));
         sender.Cancel(finishCurrentWrite: true);
         check(!sending.IsCompleted && !io.Disposed, "XIAO graceful stop keeps the outstanding report's USB session alive");
-        io.AcknowledgeReport();
+        io.AcknowledgeHeldResponse();
         await sending;
         await connection.EndSendAsync(target, CancellationToken.None);
         check(connection.IsReady(target) && sender.ReleaseReportSent == true
@@ -158,7 +158,44 @@ internal static class XiaoConnectionChecks
         var beforeWrite = unplugged.Commands.Count;
         try { await removable.WriteAsync([0, 0, 4, 0, 0, 0, 0, 0], removableTarget, CancellationToken.None); check(false, "reject send after unplug"); }
         catch (InvalidOperationException) { check(!removable.IsReady(removableTarget) && removable.Target is null && unplugged.Commands.Count == beforeWrite, "USB removal stops XIAO, clears the destination and sends nothing more"); }
+        await StartupDisconnectAsync(check);
         await ReconnectChecksAsync(check);
+    }
+
+    // Hold the UI continuation after HELLO while the serial reader observes the unplug.
+    private sealed class StartupContext : SynchronizationContext
+    {
+        internal TaskCompletionSource<Action> Posted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public override void Post(SendOrPostCallback callback, object? state) => Posted.SetResult(() => callback(state));
+    }
+
+    private static async Task StartupDisconnectAsync(Action<bool, string> check)
+    {
+        using var first = new ChannelFake { HoldHello = true };
+        using var second = new ChannelFake();
+        var channels = new Queue<ChannelFake>([first, second]);
+        using var keyboard = new XiaoSerialKeyboard(_ => channels.Dequeue()) { Port = new("COM999", "0011223344556677") };
+        var faulted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        keyboard.Status += status => { if (status.StartsWith("XIAO通信が終了")) faulted.TrySetResult(); };
+        var context = new StartupContext();
+        var previous = SynchronizationContext.Current;
+        Task starting;
+        try
+        {
+            SynchronizationContext.SetSynchronizationContext(context);
+            starting = keyboard.StartAsync(false, CancellationToken.None);
+        }
+        finally { SynchronizationContext.SetSynchronizationContext(previous); }
+
+        first.AcknowledgeHeldResponse();
+        var resume = await context.Posted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        first.Unplug();
+        await faulted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        resume();
+        try { await starting; check(false, "unplug during startup rejects the closed link"); }
+        catch (System.IO.IOException) { check(!keyboard.IsStarted && first.Disposed, "late HELLO continuation leaves the lost link stopped"); }
+        await keyboard.StartAsync(false, CancellationToken.None);
+        check(keyboard.IsStarted && channels.Count == 0, "startup after unplug opens a new session");
     }
 
     private static async Task<bool> UntilAsync(Func<bool> condition)
@@ -192,7 +229,7 @@ internal static class XiaoConnectionChecks
                 check(await UntilAsync(() => message.Text.Contains("接続先またはキー状態が変わりました"))
                     && !sending.IsCompleted && !channel.Disposed,
                     "XIAO state changes stop scheduling without cancelling an outstanding report");
-                channel.AcknowledgeReport(XiaoResult.Rejected);
+                channel.AcknowledgeHeldResponse(XiaoResult.Rejected);
                 await sending.WaitAsync(TimeSpan.FromSeconds(4));
                 var commands = channel.Commands.Where(command => command is XiaoCommand.Arm or XiaoCommand.Report
                     or XiaoCommand.Release or XiaoCommand.Disarm);
@@ -295,6 +332,7 @@ internal static class XiaoConnectionChecks
         public string? Mismatch { get; init; }
         public byte FirmwarePatch { get; init; }
         public bool FailClear { get; init; }
+        public bool HoldHello { get; init; }
         public bool HoldReport { get; set; }
         public bool DropArm { get; init; }
         public bool RejectArm { get; init; }
@@ -314,7 +352,7 @@ internal static class XiaoConnectionChecks
         }
         public async Task<int> ReadAsync(byte[] buffer, CancellationToken cancellation)
         {
-            var bytes = await input.Reader.ReadAsync(cancellation); bytes.CopyTo(buffer, 0); return bytes.Length;
+            var bytes = await input.Reader.ReadAsync(cancellation).ConfigureAwait(false); bytes.CopyTo(buffer, 0); return bytes.Length;
         }
         public Task WriteAsync(byte[] buffer, CancellationToken cancellation)
         {
@@ -328,7 +366,7 @@ internal static class XiaoConnectionChecks
                 _ => new byte[] { 0 }.Concat(State()).ToArray()
             };
             var encoded = XiaoProtocol.Encode(new((byte)(request.Command | 0x80), session, request.Sequence, generation, response));
-            if (HoldReport && request.Command == (byte)XiaoCommand.Report)
+            if ((HoldReport && request.Command == (byte)XiaoCommand.Report) || (HoldHello && request.Command == (byte)XiaoCommand.Hello))
             {
                 heldReply = encoded;
                 ReportWritten.TrySetResult();
@@ -336,10 +374,10 @@ internal static class XiaoConnectionChecks
             else input.Writer.TryWrite(encoded);
             return Task.CompletedTask;
         }
-        public void AcknowledgeReport(XiaoResult result = XiaoResult.Success)
+        public void AcknowledgeHeldResponse(XiaoResult result = XiaoResult.Success)
         {
             HoldReport = false;
-            var encoded = heldReply ?? throw new InvalidOperationException("No report is waiting.");
+            var encoded = heldReply ?? throw new InvalidOperationException("No response is waiting.");
             heldReply = null;
             if (result != XiaoResult.Success)
             {

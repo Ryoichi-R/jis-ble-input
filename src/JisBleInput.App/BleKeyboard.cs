@@ -9,6 +9,7 @@ namespace JisBleInput.App;
 internal sealed class BleKeyboard : IReportTransport, IAdvertisementPublisher, IDisposable
 {
     private readonly object sync = new();
+    private readonly HidReportQueue reports = new();
     private readonly SemaphoreSlim refreshGate = new(1, 1);
     private readonly Dictionary<string, BluetoothLEDevice> devices = [];
     private readonly Dictionary<string, byte> leds = [];
@@ -156,7 +157,7 @@ internal sealed class BleKeyboard : IReportTransport, IAdvertisementPublisher, I
 
         StartupStage = "HID制御作成";
         var control = await CharacteristicAsync(0x2A4C, GattCharacteristicProperties.WriteWithoutResponse, cancellation);
-        TrackWrite(control, async (_, args) =>
+        TrackWrite(control, async (source, args) =>
         {
             using var deferral = args.GetDeferral();
             try
@@ -172,9 +173,10 @@ internal sealed class BleKeyboard : IReportTransport, IAdvertisementPublisher, I
                         {
                             var id = args.Session.DeviceId.Id;
                             var next = command == 0;
-                            if (suspended.GetValueOrDefault(id) != next && selected == id) generation++;
+                            if (suspended.GetValueOrDefault(id) != next) InvalidateReports(id);
                             suspended[id] = next;
                         }
+                        if (command == 1) _ = RefreshHostsAsync();
                         Changed?.Invoke();
                     }
                 }
@@ -212,7 +214,7 @@ internal sealed class BleKeyboard : IReportTransport, IAdvertisementPublisher, I
                     lock (sync)
                     {
                         var id = args.Session.DeviceId.Id;
-                        if (modes.GetValueOrDefault(id, (byte)1) != value && selected == id) generation++;
+                        if (modes.GetValueOrDefault(id, (byte)1) != value) InvalidateReports(id);
                         modes[id] = value;
                     }
                     Changed?.Invoke();
@@ -405,6 +407,7 @@ internal sealed class BleKeyboard : IReportTransport, IAdvertisementPublisher, I
             {
                 foreach (var id in devices.Keys.Where(id => !ids.Contains(id)).ToArray()) RemoveDevice(id);
             }
+            await reports.RecoverAsync(TryReleaseAsync);
             Changed?.Invoke();
         }
         catch { Status?.Invoke("接続先情報を確認できません。接続先更新を押してください。"); }
@@ -420,47 +423,86 @@ internal sealed class BleKeyboard : IReportTransport, IAdvertisementPublisher, I
                 leds.Remove(device.DeviceId);
                 modes.Remove(device.DeviceId);
                 suspended.Remove(device.DeviceId);
-                if (selected == device.DeviceId) { generation++; lastReport = new byte[8]; }
+                InvalidateReports(device.DeviceId);
             }
         }
         Changed?.Invoke();
     }
 
-    private bool Connected(SendTarget target)
+    // The caller owns sync. Invalidate the old transfer before any further key can be scheduled.
+    private void InvalidateReports(string id)
     {
-        var characteristic = modes.GetValueOrDefault(target.Id, (byte)1) == 0 ? bootInput : input;
-        return !disposed && IsStarted && target.Id == selected && target.Generation == generation && !suspended.GetValueOrDefault(target.Id)
-            && devices.TryGetValue(target.Id, out var device) && device.ConnectionStatus == BluetoothConnectionStatus.Connected
+        if (selected == id || reports.NeedsRelease(id)) reports.RequireRelease(id);
+        if (selected == id) { generation++; lastReport = new byte[8]; }
+    }
+
+    private bool Connected(SendTarget target) => selected == target.Id && generation == target.Generation && Connected(target.Id);
+
+    private bool Connected(string id)
+    {
+        var characteristic = modes.GetValueOrDefault(id, (byte)1) == 0 ? bootInput : input;
+        return !disposed && IsStarted && !suspended.GetValueOrDefault(id)
+            && devices.TryGetValue(id, out var device) && device.ConnectionStatus == BluetoothConnectionStatus.Connected
             && device.DeviceInformation.Pairing.IsPaired && characteristic is not null
-            && characteristic.SubscribedClients.Any(client => client.Session.DeviceId.Id == target.Id);
+            && characteristic.SubscribedClients.Any(client => client.Session.DeviceId.Id == id);
     }
 
     public bool IsReady(SendTarget target)
     {
         lock (sync)
         {
-            try { return Connected(target) && (!leds.TryGetValue(target.Id, out var value) || (value & 2) == 0); }
+            try { return Connected(target) && !reports.NeedsRelease(target.Id) && (!leds.TryGetValue(target.Id, out var value) || (value & 2) == 0); }
             catch { return false; }
         }
     }
 
-    public async Task WriteAsync(byte[] report, SendTarget target, CancellationToken cancellation)
-    {
-        cancellation.ThrowIfCancellationRequested();
-        GattLocalCharacteristic characteristic;
-        GattSubscribedClient client;
-        lock (sync)
+    public Task WriteAsync(byte[] report, SendTarget target, CancellationToken cancellation) =>
+        reports.WriteAsync(target.Id, () =>
         {
-            if (report.Length != 8 || !Connected(target)) throw new InvalidOperationException("送信先が切断・変更されました。");
-            if (report.Any(value => value != 0) && leds.TryGetValue(target.Id, out var value) && (value & 2) != 0)
-                throw new InvalidOperationException("受信側のCapsLockをオフにしてください。");
-            characteristic = modes.GetValueOrDefault(target.Id, (byte)1) == 0 ? bootInput! : input!;
-            client = characteristic.SubscribedClients.FirstOrDefault(candidate => candidate.Session.DeviceId.Id == target.Id)
-                ?? throw new InvalidOperationException("キー入力の購読がありません。");
-            lastReport = report.ToArray();
+            lock (sync)
+            {
+                if (report.Length != 8 || !Connected(target)) throw new InvalidOperationException("送信先が切断・変更されました。");
+                if (report.Any(value => value != 0) && leds.TryGetValue(target.Id, out var value) && (value & 2) != 0)
+                    throw new InvalidOperationException("受信側のCapsLockをオフにしてください。");
+                lastReport = report.ToArray();
+                return NotifyAsync(target.Id, report, cancellation);
+            }
+        }, cancellation);
+
+    private async Task<bool> TryReleaseAsync(string id)
+    {
+        try
+        {
+            Task sent;
+            lock (sync)
+            {
+                if (!Connected(id)) return false;
+                sent = NotifyAsync(id, new byte[8], CancellationToken.None);
+            }
+            await sent.ConfigureAwait(false);
+            return true;
         }
-        var result = await characteristic.NotifyValueAsync(Buffer(report), client).AsTask(cancellation).WaitAsync(TimeSpan.FromSeconds(5), cancellation);
-        if (result.Status != GattCommunicationStatus.Success) throw new InvalidOperationException($"キー通知: {result.Status}");
+        catch { return false; } // Retry on the next subscription change or periodic refresh.
+    }
+
+    // Start the targeted WinRT operation while the caller still owns sync.
+    private async Task NotifyAsync(string id, byte[] report, CancellationToken cancellation)
+    {
+        var characteristic = modes.GetValueOrDefault(id, (byte)1) == 0 ? bootInput! : input!;
+        var client = characteristic.SubscribedClients.FirstOrDefault(candidate => candidate.Session.DeviceId.Id == id)
+            ?? throw new InvalidOperationException("キー入力の購読がありません。");
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+        timeout.CancelAfter(TimeSpan.FromSeconds(5));
+        try
+        {
+            cancellation.ThrowIfCancellationRequested();
+            var result = await characteristic.NotifyValueAsync(Buffer(report), client).AsTask(timeout.Token).WaitAsync(timeout.Token).ConfigureAwait(false);
+            if (result.Status != GattCommunicationStatus.Success) throw new InvalidOperationException($"キー通知: {result.Status}");
+        }
+        catch (OperationCanceledException error) when (!cancellation.IsCancellationRequested && timeout.IsCancellationRequested)
+        {
+            throw new TimeoutException("キー通知が時間切れになりました。", error);
+        }
     }
 
     private static Windows.Storage.Streams.IBuffer Buffer(byte[] bytes)
@@ -486,7 +528,7 @@ internal sealed class BleKeyboard : IReportTransport, IAdvertisementPublisher, I
         leds.Remove(id);
         modes.Remove(id);
         suspended.Remove(id);
-        if (selected == id) { generation++; lastReport = new byte[8]; }
+        InvalidateReports(id);
     }
 
     private void ResetGatt()

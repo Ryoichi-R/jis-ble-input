@@ -80,17 +80,22 @@ internal sealed class XiaoSerialKeyboard : IKeyboardConnection
             linkGeneration = 0;
             next.Changed += () =>
             {
-                if (!ReferenceEquals(client, next)) return;
                 lock (sync)
                 {
+                    if (!ReferenceEquals(client, next)) return;
                     if (linkGeneration != next.Generation) { generation++; linkGeneration = next.Generation; }
                 }
                 Changed?.Invoke();
             };
             next.Faulted += () =>
             {
-                if (!ReferenceEquals(client, next)) return;
-                lock (sync) { started = false; generation++; selected = null; }
+                lock (sync)
+                {
+                    if (!ReferenceEquals(client, next)) return;
+                    started = false;
+                    generation++;
+                    selected = null;
+                }
                 Status?.Invoke("XIAO通信が終了しました。接続と受信側のキー状態を確認してください。自動再送はしません。");
                 Changed?.Invoke();
             };
@@ -101,7 +106,13 @@ internal sealed class XiaoSerialKeyboard : IKeyboardConnection
                 if (!string.Equals(state.Board, device.Serial, StringComparison.OrdinalIgnoreCase)
                     || !state.FirmwareSupported || !state.DescriptorHash.SequenceEqual(SHA256.HashData(HidKeyboardMap.Descriptor)))
                     throw new InvalidDataException("基板識別・FW版・キー定義が対応していません。送信を開始しません。");
-                lock (sync) { started = true; generation++; }
+                lock (sync)
+                {
+                    if (disposed || !ReferenceEquals(client, next) || next.IsClosed)
+                        throw new IOException("接続の準備中にXIAOが切断されました。");
+                    started = true;
+                    generation++;
+                }
             }
             catch { next.Dispose(); throw; }
         }

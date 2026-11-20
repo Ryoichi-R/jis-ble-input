@@ -49,6 +49,7 @@ public sealed class XiaoClient : IDisposable
     private Task? heartbeat;
     private int disposed;
     private Snapshot? snapshot;
+    public bool IsClosed => Volatile.Read(ref disposed) != 0;
     public uint Generation => Volatile.Read(ref snapshot)?.Generation ?? 0;
     public XiaoStatus? Current => Volatile.Read(ref snapshot)?.Status;
     public event Action? Changed;

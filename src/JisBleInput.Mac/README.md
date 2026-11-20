@@ -1,4 +1,4 @@
-# JIS BLE Input for Mac 0.20.0
+# JIS BLE Input for Mac 0.20.1
 
 Macの本文をBluetoothキーボードとしてWindowsに送ります。**英数字・URL** モードで半角英数字、記号、改行を最大5,000文字まで送れます。改行はCRLFも1文字として数えます。
 

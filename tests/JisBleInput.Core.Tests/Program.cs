@@ -1344,6 +1344,26 @@ await offThreadTransfer.ConfigureAwait(false);
 Check(offThreadTransport.Frames > 4 && uiContext.Posts == 0,
     "key steps continue without the caller's synchronization context");
 
+{
+    var reports = new HidReportQueue();
+    var firstPress = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var press = reports.WriteAsync("A", () => firstPress.Task, CancellationToken.None);
+    reports.RequireRelease("A");
+    var attempts = new List<string>();
+    var recover = reports.RecoverAsync(id => { attempts.Add(id); return Task.FromResult(false); });
+    Check(!recover.IsCompleted && attempts.Count == 0, "suspend recovery waits for outstanding key notification");
+    firstPress.SetResult();
+    await Task.WhenAll(press, recover);
+    Check(attempts.SequenceEqual(["A"]) && reports.NeedsRelease("A"), "failed release stays pending for the original receiver");
+    await RejectAsync(() => reports.WriteAsync("A", () => Task.CompletedTask, CancellationToken.None),
+        "new input is blocked until release succeeds");
+    await reports.WriteAsync("B", () => Task.CompletedTask, CancellationToken.None);
+    await reports.RecoverAsync(id => { reports.RequireRelease(id); return Task.FromResult(true); });
+    Check(reports.NeedsRelease("A"), "another suspend during recovery needs a fresh release");
+    await reports.RecoverAsync(id => Task.FromResult(id == "A"));
+    await reports.WriteAsync("A", () => Task.CompletedTask, CancellationToken.None);
+    Check(!reports.NeedsRelease("A"), "successful release re-enables the original receiver");
+}
 await XiaoChecks.RunAsync(Check);
 Console.WriteLine($"Passed: {passed}");
 
