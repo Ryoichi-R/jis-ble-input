@@ -83,6 +83,8 @@ internal static class UiTestProgram
         var pause = Find<Button>(window, "PauseButton");
         var resume = Find<Button>(window, "ResumeButton");
         var stop = Find<Button>(window, "StopButton");
+        Check(editor.Text.Length == 0 && Find<TextBlock>(window, "DraftInfo").Text == "0 / 5,000文字 · 改行0",
+            "startup opens with an empty editor and zero draft counts");
         Check(editor.AcceptsReturn && !editor.AcceptsTab, "Enter retains multiline input while Tab navigates instead of inserting unsupported text");
         Check(clear.IsVisible && clear.IsEnabled && paste.IsVisible && paste.IsEnabled && pause.Visibility == Visibility.Collapsed
             && resume.Visibility == Visibility.Collapsed && stop.Visibility == Visibility.Collapsed,
@@ -242,21 +244,33 @@ internal static class UiTestProgram
         Check(!window.IsVisible && !settings.IsVisible, "hiding the main window also hides its settings window");
         window.RestoreFromTray();
 
+        editor.Text = "再表示を確認する本文";
         window.Close();
         await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
         Check(!window.IsVisible && !closed.Task.IsCompleted, "the window close request hides instead of closing");
         Check(window.TrayIconVisible && !application.Dispatcher.HasShutdownStarted, "the notification icon and dispatcher remain alive while hidden");
 
         window.RestoreFromTray();
-        Check(window.IsVisible, "the hidden window can be shown again");
+        Check(window.IsVisible && editor.Text == "再表示を確認する本文", "opening from the tray keeps the draft");
+        window.ReopenFromLaunch();
+        Check(editor.Text == "再表示を確認する本文", "launching again while visible keeps the draft");
         window.WindowState = WindowState.Minimized;
         window.RestoreFromTray();
         Check(window.WindowState == WindowState.Normal, "restore also recovers a minimized window");
 
         window.Close();
         await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
-        window.RestoreFromTray();
-        Check(window.IsVisible && !closed.Task.IsCompleted, "repeated hide and restore reuses the same live window");
+        window.ApplyTransferControls(SendState.Paused, true, false, true);
+        window.ReopenFromLaunch();
+        Check(window.IsVisible && editor.Text == "再表示を確認する本文", "launching again while a transfer is paused keeps the draft");
+
+        window.ApplyTransferControls(SendState.Idle, false, false, false);
+        window.Close();
+        await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+        window.ReopenFromLaunch();
+        Check(window.IsVisible && !closed.Task.IsCompleted && editor.Text.Length == 0
+            && Find<TextBlock>(window, "DraftInfo").Text == "0 / 5,000文字 · 改行0",
+            "launching again from the executable shows the hidden window with an empty editor and zero draft counts");
 
         var opened = 0;
         var exited = 0;
@@ -488,6 +502,7 @@ internal static class UiTestProgram
         var closed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         exitWindow.Closed += (_, _) => closed.TrySetResult();
         exitWindow.Show();
+        Find<TextBox>(exitWindow, "Editor").Text = "A";
         var sending = exitWindow.SendToAsync(exiting.Target!);
         await exiting.Entered.Task;
         exitWindow.RequestExit();
@@ -499,6 +514,7 @@ internal static class UiTestProgram
         var failing = new PreparingConnection();
         var failingWindow = new MainWindow(Architecture.Arm64, false, Path.Combine(settingsRoot, "unexpected"), keyboardConnection: failing);
         failingWindow.Show();
+        Find<TextBox>(failingWindow, "Editor").Text = "A";
         var arming = failingWindow.SendToAsync(failing.Target!);
         await failing.Entered.Task;
         var cleanup = failingWindow.StopAfterUnexpectedErrorAsync();
@@ -851,7 +867,7 @@ internal static class UiTestProgram
         }
     }
 
-    private static T Find<T>(DependencyObject root, string name) where T : DependencyObject =>
+    internal static T Find<T>(DependencyObject root, string name) where T : DependencyObject =>
         LogicalTreeHelper.FindLogicalNode(root, name) as T ?? throw new InvalidOperationException($"Missing UI element: {name}");
 
     private static bool IsWithinContent(FrameworkElement element, Window window)

@@ -81,8 +81,7 @@ internal sealed class MainWindow : Window
         Name = "Editor",
         FontSize = 16,
         Padding = new Thickness(8),
-        MinHeight = 80,
-        Text = "日本語ABC橋。"
+        MinHeight = 80
     };
     private readonly ComboBox hosts = new() { Name = "Hosts", MinWidth = 0, MinHeight = 30, DisplayMemberPath = "Display", SelectedValuePath = "Id", ToolTip = "送信先PC" };
     private readonly ComboBox inputMode = new()
@@ -1160,6 +1159,12 @@ internal sealed class MainWindow : Window
     }
 
     private static string FormatDuration(TimeSpan value) => $"{(long)value.TotalHours:00}:{value.Minutes:00}:{value.Seconds:00}";
+
+    internal void ReopenFromLaunch()
+    {
+        if (!IsVisible && clearDraft.IsEnabled) editor.Clear();
+        RestoreFromTray();
+    }
 
     internal void RestoreFromTray()
     {

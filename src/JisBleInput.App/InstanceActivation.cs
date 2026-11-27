@@ -18,7 +18,7 @@ internal static class InstanceActivation
             {
                 if (Message != 0 && message == Message)
                 {
-                    window.RestoreFromTray();
+                    window.ReopenFromLaunch();
                     handled = true;
                 }
                 return IntPtr.Zero;

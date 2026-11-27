@@ -54,6 +54,7 @@ internal static class XiaoConnectionChecks
             {
                 await window.StartConnectionAsync(false);
                 keyboard.Select(keyboard.Hosts.Single().Id);
+                UiTestProgram.Find<TextBox>(window, "Editor").Text = "橋";
                 await window.SendToAsync(keyboard.Target!).WaitAsync(TimeSpan.FromSeconds(4));
                 var commands = notReady.Commands.Where(command => command is XiaoCommand.Arm or XiaoCommand.Report
                     or XiaoCommand.Release or XiaoCommand.Disarm);
@@ -77,6 +78,7 @@ internal static class XiaoConnectionChecks
             {
                 await timeoutKeyboard.StartAsync(false, CancellationToken.None);
                 timeoutKeyboard.Select(timeoutKeyboard.Hosts.Single().Id);
+                UiTestProgram.Find<TextBox>(window, "Editor").Text = "橋";
                 await window.SendToAsync(timeoutKeyboard.Target!).WaitAsync(TimeSpan.FromSeconds(4));
                 var message = ((Grid)window.Content).Children.OfType<StackPanel>()
                     .SelectMany(panel => panel.Children.OfType<TextBlock>()).Single(label => label.Name == "TransferMessage").Text;
@@ -223,6 +225,7 @@ internal static class XiaoConnectionChecks
                 keyboard.Select(keyboard.Hosts.Single().Id);
                 var message = ((Grid)window.Content).Children.OfType<StackPanel>()
                     .SelectMany(panel => panel.Children.OfType<TextBlock>()).Single(label => label.Name == "TransferMessage");
+                UiTestProgram.Find<TextBox>(window, "Editor").Text = "橋";
                 var sending = window.SendToAsync(keyboard.Target!);
                 await channel.ReportWritten.Task.WaitAsync(TimeSpan.FromSeconds(1));
                 await channel.ChangeAsync(disconnect ? 6u : 5u, disconnect ? (byte)(1 | 64) : (byte)(7 | 16 | 32 | 64));
